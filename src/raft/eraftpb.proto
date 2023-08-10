@@ -1,0 +1,270 @@
+/*
+ * Copyright 2023 tison <wander4096@gmail.com>
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+syntax = "proto3";
+package eraftpb;
+
+enum EntryType {
+  EntryNormal = 0;
+  EntryConfChange = 1;
+}
+
+// The entry is a type of change that needs to be applied. It contains two data fields.
+// While the fields are built into the model; their usage is determined by the entry_type.
+//
+// For normal entries, the data field should contain the data change that should be applied.
+// The context field can be used for any contextual data that might be relevant to the
+// application of the data.
+//
+// For configuration changes, the data will contain the ConfChange message and the
+// context will provide anything needed to assist the configuration change. The context
+// if for the user to set and use in this case.
+message Entry {
+  EntryType entry_type = 1;
+  uint64 term = 2;
+  uint64 index = 3;
+  bytes data = 4;
+  bytes context = 6;
+}
+
+message SnapshotMetadata {
+  // The current `ConfState`.
+  ConfState conf_state = 1;
+  // The applied index.
+  uint64 index = 2;
+  // The term of the applied index.
+  uint64 term = 3;
+}
+
+message Snapshot {
+  bytes data = 1;
+  SnapshotMetadata metadata = 2;
+}
+
+enum MessageType {
+  // 'MsgHup' is used for election. If a node is a follower or candidate, the
+  // 'tick' function in 'raft' struct is set as 'tick_election'. If a follower or
+  // candidate has not received any heartbeat before the election timeout, it
+  // passes 'MsgHup' to its 'step' method and becomes (or remains) a candidate to
+  // start a new election.
+  MsgHup = 0;
+  // 'MsgBeat' is an internal type that signals the leader to send a heartbeat of
+  // the 'MsgHeartbeat' type. If a node is a leader, the 'tick' function in
+  // the 'raft' struct is set as 'tick_heartbeat', and triggers the leader to
+  // send periodic 'MsgHeartbeat' messages to its followers.
+  MsgBeat = 1;
+  // 'MsgPropose' proposes to append data to its log entries. This is a special
+  // type to redirect proposals to leader. Therefore, send method overwrites
+  // [eraftpb::Message]'s term with its HardState's term to avoid attaching its
+  // local term to 'MsgPropose'. When 'MsgPropose' is passed to the leader's 'step'
+  // method, the leader first calls the 'append_entry' method to append entries
+  // to its log, and then calls 'bcast_append' method to send those entries to
+  // its peers. When passed to candidate, 'MsgPropose' is dropped. When passed to
+  // follower, 'MsgPropose' is stored in follower's mailbox(msgs) by the send
+  // method. It is stored with sender's ID and any raft server implementation should
+  // later forward them to leader.
+  MsgPropose = 2;
+  // 'MsgAppend' contains log entries to replicate. A leader calls bcast_append,
+  // which calls sendAppend, which sends soon-to-be-replicated logs in 'MsgAppend'
+  // type. When 'MsgAppend' is passed to candidate's Step method, candidate reverts
+  // back to follower, because it indicates that there is a valid leader sending
+  // 'MsgAppend' messages. Candidate and follower respond to this message in
+  // 'MsgAppendResponse' type.
+  MsgAppend = 3;
+  // 'MsgAppendResponse' is response to log replication request('MsgAppend'). When
+  // 'MsgAppend' is passed to candidate or follower's 'step' method, it responds by
+  // calling 'handle_append_entries' method, which sends 'MsgAppendResponse' to raft
+  // mailbox.
+  MsgAppendResponse = 4;
+  // 'MsgRequestVote' requests votes for election. When a node is a follower or
+  // candidate and 'MsgHup' is passed to its 'step' method, then the node calls
+  // 'campaign' method to campaign itself to become a leader. Once 'campaign'
+  // method is called, the node becomes candidate and sends 'MsgRequestVote' to peers
+  // in cluster to request votes. When passed to leader or candidate's 'step'
+  // method and the message's term is lower than leader's or candidate's,
+  // 'MsgRequestVote' will be rejected ('MsgRequestVoteResponse' is returned with reject=true).
+  // If leader or candidate receives 'MsgRequestVote' with higher term, it will revert
+  // back to follower. When 'MsgRequestVote' is passed to follower, it votes for the
+  // sender only when sender's last term is greater than MsgRequestVote's term or
+  // sender's last term is equal to MsgRequestVote's term but sender's last committed
+  // index is greater than or equal to follower's.
+  MsgRequestVote = 5;
+  // 'MsgRequestVoteResponse' contains responses from voting request. When
+  // 'MsgRequestVoteResponse' is passed to candidate, the candidate calculates
+  // how many votes it has won. If it's more than majority (quorum), it becomes
+  // leader and calls 'bcast_append'. If candidate receives majority of votes
+  // of denials, it reverts back to follower.
+  MsgRequestVoteResponse = 6;
+  // 'MsgSnapshot' requests to install a snapshot message. When a node has just
+  // become a leader or the leader receives 'later' message, it calls
+  // 'bcast_append' method, which then calls 'send_append' method to each
+  // follower. In 'send_append', if a leader fails to get term or entries,
+  // the leader requests snapshot by sending 'MsgSnapshot' type message.
+  MsgSnapshot = 7;
+  // 'MsgHeartbeat' sends heartbeat from leader. When 'MsgHeartbeat' is passed
+  // to candidate and message's term is higher than candidate's, the candidate
+  // reverts back to follower and updates its committed index from the one in
+  // this heartbeat. And it sends the message to its mailbox. When
+  // 'MsgHeartbeat' is passed to follower's 'step' method and message's term is
+  // higher than follower's, the follower updates its leader_id with the ID
+  // from the message.
+  MsgHeartbeat = 8;
+  // 'MsgHeartbeatResponse' is a response to 'MsgHeartbeat'. When 'MsgHeartbeatResponse'
+  // is passed to leader's 'step' method, the leader knows which follower
+  // responded. And only when the leader's last committed index is greater than
+  // follower's match index, the leader runs 'send_append` method.
+  MsgHeartbeatResponse = 9;
+  // 'MsgUnreachable' tells that request(message) wasn't delivered. When
+  // 'MsgUnreachable' is passed to leader's 'step' method, the leader discovers
+  // that the follower that sent this 'MsgUnreachable' is not reachable, often
+  // indicating 'MsgAppend' is lost. When follower's progress state is replicate,
+  // the leader sets it back to probe.
+  MsgUnreachable = 10;
+  // 'MsgSnapStatus' tells the result of snapshot install message. When a
+  // follower rejected 'MsgSnapshot', it indicates the snapshot request with
+  // 'MsgSnapshot' had failed from network issues which causes the network layer
+  // to fail to send out snapshots to its followers. Then leader considers
+  // follower's progress as probe. When 'MsgSnapshot' were not rejected, it
+  // indicates that the snapshot succeeded and the leader sets follower's
+  // progress to probe and resumes its log replication.
+  MsgSnapStatus = 11;
+  MsgCheckQuorum = 12;
+  MsgTransferLeader = 13;
+  MsgTimeoutNow = 14;
+  MsgReadIndex = 15;
+  MsgReadIndexResp = 16;
+  // 'MsgRequestPreVote' and 'MsgRequestPreVoteResponse' are used in an optional
+  // two-phase election protocol. When the pre_vote option is set, a pre-election
+  // is carried out first (using the same rules as a regular election), and no node
+  // increases its term number unless the pre-election indicates that the campaigning
+  // node would win. This minimizes disruption when a partitioned node rejoins the cluster.
+  MsgRequestPreVote = 17;
+  MsgRequestPreVoteResponse = 18;
+}
+
+message Message {
+  MessageType msg_type = 1;
+  uint64 to = 2;
+  uint64 from = 3;
+  uint64 term = 4;
+  // logTerm is generally used for appending Raft logs to followers. For example,
+  // (type=MsgAppend,index=100,log_term=5) means leader appends entries starting at
+  // index=101, and the term of entry at index 100 is 5.
+  // (type=MsgAppendResponse,reject=true,index=100,log_term=5) means follower rejects some
+  // entries from its leader as it already has an entry with term 5 at index 100.
+  uint64 log_term = 5;
+  uint64 index = 6;
+  repeated Entry entries = 7;
+  uint64 commit = 8;
+  uint64 commit_term = 15;
+  // snapshot is present and non-empty for MsgSnapshot messages and absent for
+  // all other message types.
+  Snapshot snapshot = 9;
+  uint64 request_snapshot = 13;
+  bool reject = 10;
+  uint64 reject_hint = 11;
+  bytes context = 12;
+  int64 priority = 16;
+}
+
+message HardState {
+  uint64 term = 1;
+  uint64 vote = 2;
+  uint64 commit = 3;
+}
+
+enum ConfChangeTransition {
+  // Automatically use the simple protocol if possible, otherwise fall back
+  // to ConfChangeType::Implicit. Most applications will want to use this.
+  Auto = 0;
+  // Use joint consensus unconditionally, and transition out of them
+  // automatically (by proposing a zero configuration change).
+  //
+  // This option is suitable for applications that want to minimize the time
+  // spent in the joint configuration and do not store the joint configuration
+  // in the state machine (outside of InitialState).
+  Implicit = 1;
+  // Use joint consensus and remain in the joint configuration until the
+  // application proposes a no-op configuration change. This is suitable for
+  // applications that want to explicitly control the transitions, for example
+  // to use a custom payload (via the Context field).
+  Explicit = 2;
+}
+
+message ConfState {
+  repeated uint64 voters = 1;
+  repeated uint64 learners = 2;
+
+  // The voters in the outgoing config. If not empty the node is in joint consensus.
+  repeated uint64 voters_outgoing = 3;
+  // The nodes that will become learners when the outgoing config is removed.
+  // These nodes are necessarily currently in nodes_joint (or they would have
+  // been added to the incoming config right away).
+  repeated uint64 learners_next = 4;
+  // If set, the config is joint and Raft will automatically transition into
+  // the final config (i.e. remove the outgoing config) when this is safe.
+  bool auto_leave = 5;
+}
+
+enum ConfChangeType {
+  AddNode = 0;
+  RemoveNode = 1;
+  AddLearnerNode = 2;
+}
+
+// ConfChangeSingle is an individual configuration change operation. Multiple
+// such operations can be carried out atomically via a ConfChange.
+message ConfChangeSingle {
+  ConfChangeType change_type = 1;
+  uint64 node_id = 2;
+}
+
+// ConfChange messages initiate configuration changes. They support both the
+// simple "one at a time" membership change protocol and full Joint Consensus
+// allowing for arbitrary changes in membership.
+//
+// The supplied context is treated as an opaque payload and can be used to
+// attach an action on the state machine to the application of the config change
+// proposal. Note that contrary to Joint Consensus as outlined in the Raft
+// paper[1], configuration changes become active when they are *applied* to the
+// state machine (not when they are appended to the log).
+//
+// The simple protocol can be used whenever only a single change is made.
+//
+// Non-simple changes require the use of Joint Consensus, for which two
+// configuration changes are run. The first configuration change specifies the
+// desired changes and transitions the Raft group into the joint configuration,
+// in which quorum requires a majority of both the pre-changes and post-changes
+// configuration. Joint Consensus avoids entering fragile intermediate
+// configurations that could compromise survivability. For example, without the
+// use of Joint Consensus and running across three availability zones with a
+// replication factor of three, it is not possible to replace a voter without
+// entering an intermediate configuration that does not survive the outage of
+// one availability zone.
+//
+// The provided ConfChangeTransition specifies how (and whether) Joint Consensus
+// is used, and assigns the task of leaving the joint configuration either to
+// Raft or the application. Leaving the joint configuration is accomplished by
+// proposing a ConfChange with only and optionally the Context field populated.
+//
+// For details on Raft membership changes, see:
+//
+// [1]: https://github.com/ongardie/dissertation/blob/master/online-trim.pdf
+message ConfChange {
+  ConfChangeTransition transition = 1;
+  repeated ConfChangeSingle changes = 2;
+  bytes context = 3;
+}

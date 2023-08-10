@@ -1,0 +1,104 @@
+Committed { joint: false, ids: [], idsj: [], idxs: [] }
+<empty majority quorum>∞
+
+Committed { joint: false, ids: [1], idsj: [], idxs: [0] }
+     idx
+?      0    (id=1)
+0
+
+Committed { joint: false, ids: [1], idsj: [], idxs: [12] }
+     idx
+>     12    (id=1)
+12
+
+Committed { joint: false, ids: [1, 2], idsj: [], idxs: [0, 0] }
+      idx
+?       0    (id=1)
+?       0    (id=2)
+0
+
+Committed { joint: false, ids: [1, 2], idsj: [], idxs: [12, 0] }
+      idx
+x>     12    (id=1)
+?       0    (id=2)
+0
+
+Committed { joint: false, ids: [1, 2], idsj: [], idxs: [12, 5] }
+      idx
+x>     12    (id=1)
+>       5    (id=2)
+5
+
+Committed { joint: false, ids: [1, 2, 3], idsj: [], idxs: [0, 0, 0] }
+       idx
+?        0    (id=1)
+?        0    (id=2)
+?        0    (id=3)
+0
+
+Committed { joint: false, ids: [1, 2, 3], idsj: [], idxs: [12, 0, 0] }
+       idx
+xx>     12    (id=1)
+?        0    (id=2)
+?        0    (id=3)
+0
+
+Committed { joint: false, ids: [1, 2, 3], idsj: [], idxs: [12, 5, 0] }
+       idx
+xx>     12    (id=1)
+x>       5    (id=2)
+?        0    (id=3)
+5
+
+Committed { joint: false, ids: [1, 2, 3], idsj: [], idxs: [12, 5, 6] }
+       idx
+xx>     12    (id=1)
+>        5    (id=2)
+x>       6    (id=3)
+6
+
+Committed { joint: false, ids: [1, 2, 3], idsj: [], idxs: [12, 5, 4] }
+       idx
+xx>     12    (id=1)
+x>       5    (id=2)
+>        4    (id=3)
+5
+
+Committed { joint: false, ids: [1, 2, 3], idsj: [], idxs: [5, 5, 0] }
+       idx
+x>       5    (id=1)
+>        5    (id=2)
+?        0    (id=3)
+5
+
+Committed { joint: false, ids: [1, 2, 3], idsj: [], idxs: [5, 5, 12] }
+       idx
+>        5    (id=1)
+>        5    (id=2)
+xx>     12    (id=3)
+5
+
+Committed { joint: false, ids: [1, 2, 3], idsj: [], idxs: [100, 101, 103] }
+       idx
+>      100    (id=1)
+x>     101    (id=2)
+xx>    103    (id=3)
+101
+
+Committed { joint: false, ids: [1, 2, 3, 4, 5], idsj: [], idxs: [101, 104, 103, 103, 0] }
+         idx
+x>       101    (id=1)
+xxxx>    104    (id=2)
+xx>      103    (id=3)
+>        103    (id=4)
+?          0    (id=5)
+103
+
+Committed { joint: false, ids: [1, 2, 3, 4, 5], idsj: [], idxs: [101, 102, 103, 103, 0] }
+         idx
+x>       101    (id=1)
+xx>      102    (id=2)
+xxx>     103    (id=3)
+>        103    (id=4)
+?          0    (id=5)
+102

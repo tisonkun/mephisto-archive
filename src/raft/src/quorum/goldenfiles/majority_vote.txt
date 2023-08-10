@@ -1,0 +1,65 @@
+Vote { joint: false, ids: [], idsj: [], votes: [] }
+VoteWon
+
+Vote { joint: false, ids: [1], idsj: [], votes: [0] }
+VotePending
+
+Vote { joint: false, ids: [1], idsj: [], votes: [1] }
+VoteLost
+
+Vote { joint: false, ids: [123], idsj: [], votes: [2] }
+VoteWon
+
+Vote { joint: false, ids: [4, 8], idsj: [], votes: [0, 0] }
+VotePending
+
+Vote { joint: false, ids: [4, 8], idsj: [], votes: [1, 0] }
+VoteLost
+
+Vote { joint: false, ids: [4, 8], idsj: [], votes: [2, 0] }
+VotePending
+
+Vote { joint: false, ids: [4, 8], idsj: [], votes: [1, 2] }
+VoteLost
+
+Vote { joint: false, ids: [4, 8], idsj: [], votes: [2, 2] }
+VoteWon
+
+Vote { joint: false, ids: [2, 4, 7], idsj: [], votes: [0, 0, 0] }
+VotePending
+
+Vote { joint: false, ids: [2, 4, 7], idsj: [], votes: [1, 0, 0] }
+VotePending
+
+Vote { joint: false, ids: [2, 4, 7], idsj: [], votes: [2, 0, 0] }
+VotePending
+
+Vote { joint: false, ids: [2, 4, 7], idsj: [], votes: [1, 1, 0] }
+VoteLost
+
+Vote { joint: false, ids: [2, 4, 7], idsj: [], votes: [2, 1, 0] }
+VotePending
+
+Vote { joint: false, ids: [2, 4, 7], idsj: [], votes: [2, 2, 0] }
+VoteWon
+
+Vote { joint: false, ids: [2, 4, 7], idsj: [], votes: [2, 2, 1] }
+VoteWon
+
+Vote { joint: false, ids: [2, 4, 7], idsj: [], votes: [1, 2, 1] }
+VoteLost
+
+Vote { joint: false, ids: [1, 2, 3, 4, 5, 6, 7], idsj: [], votes: [2, 2, 1, 2, 0, 0, 0] }
+VotePending
+
+Vote { joint: false, ids: [1, 2, 3, 4, 5, 6, 7], idsj: [], votes: [0, 2, 2, 0, 1, 2, 1] }
+VotePending
+
+Vote { joint: false, ids: [1, 2, 3, 4, 5, 6, 7], idsj: [], votes: [2, 2, 1, 2, 0, 1, 2] }
+VoteWon
+
+Vote { joint: false, ids: [1, 2, 3, 4, 5, 6, 7], idsj: [], votes: [2, 2, 0, 1, 2, 1, 1] }
+VotePending
+
+Vote { joint: false, ids: [1, 2, 3, 4, 5, 6, 7], idsj: [], votes: [2, 2, 1, 2, 1, 1, 1] }
+VoteLost
