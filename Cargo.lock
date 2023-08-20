@@ -510,6 +510,9 @@ dependencies = [
 [[package]]
 name = "mephisto-raftstore"
 version = "0.1.0"
+dependencies = [
+ "bytes",
+]
 
 [[package]]
 name = "multimap"

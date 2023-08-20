@@ -19,3 +19,4 @@ edition.workspace = true
 authors.workspace = true
 
 [dependencies]
+bytes = "1.4.0"
