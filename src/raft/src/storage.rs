@@ -523,8 +523,8 @@ impl Storage for MemStorage {
                             ..Default::default()
                         })
                     }
-                    Some(_) => {
-                        snap.metadata.as_mut().unwrap().index = request_index;
+                    Some(ref mut metadata) => {
+                        metadata.index = request_index;
                     }
                 }
             }
