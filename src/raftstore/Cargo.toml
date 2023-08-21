@@ -19,5 +19,14 @@ edition.workspace = true
 authors.workspace = true
 
 [dependencies]
+anyhow = "1.0.72"
 bytes = "1.4.0"
+crossbeam = "0.8.2"
+mephisto-raft = { path = "../raft" }
 polling = "2.8.0"
+prost = "0.11.9"
+tracing = "0.1.37"
+
+[dev-dependencies]
+rayon = "1.7.0"
+tracing-subscriber = "0.3.17"

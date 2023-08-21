@@ -50,7 +50,7 @@ pub struct WriteContext<'a> {
 }
 
 impl<'a> WriteContext<'a> {
-    pub fn buffer(&mut self) -> &mut impl BufMut {
+    pub fn buffer(&mut self) -> &mut BytesMut {
         self.buf
     }
 }
