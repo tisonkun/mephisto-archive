@@ -13,8 +13,11 @@
 // limitations under the License.
 
 #![feature(io_error_other)]
+#![feature(assert_matches)]
 
+pub mod datatree;
 pub mod node;
+pub mod proto;
 pub mod router;
 pub mod service;
 pub mod shutdown;

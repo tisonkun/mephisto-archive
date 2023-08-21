@@ -25,15 +25,30 @@ use tracing::{error, error_span, info, trace};
 
 use crate::{transport::Transport, RaftMessage};
 
-pub struct RaftRouter {
-    this: Peer,
-    peers: HashMap<u64, Sender<RaftMessage>>,
+pub struct ShutdownRouter {
     shutdown_signals: Vec<Sender<()>>,
     shutdown_waiters: WaitGroup,
 }
 
+impl ShutdownRouter {
+    pub fn shutdown(self) {
+        for shutdown in self.shutdown_signals {
+            if let Err(err) = shutdown.send(()) {
+                // receiver closed - already shutdown
+                trace!(?err, "shutdown router connection cannot send signal");
+            }
+        }
+        self.shutdown_waiters.wait();
+    }
+}
+
+pub struct RaftRouter {
+    this: Peer,
+    peers: HashMap<u64, Sender<RaftMessage>>,
+}
+
 impl RaftRouter {
-    pub fn new(this: Peer, peer_list: Vec<Peer>) -> RaftRouter {
+    pub fn new(this: Peer, peer_list: Vec<Peer>) -> (RaftRouter, ShutdownRouter) {
         let mut shutdown_signals = vec![];
         let shutdown_waiters = WaitGroup::new();
 
@@ -65,22 +80,12 @@ impl RaftRouter {
             shutdown_signals.push(tx_shutdown);
         }
 
-        RaftRouter {
-            this,
-            peers,
+        let router = RaftRouter { this, peers };
+        let shutdown = ShutdownRouter {
             shutdown_signals,
             shutdown_waiters,
-        }
-    }
-
-    pub fn shutdown(self) {
-        for shutdown in self.shutdown_signals {
-            if let Err(err) = shutdown.send(()) {
-                // receiver closed - already shutdown
-                trace!(?err, "shutdown router connection cannot send signal");
-            }
-        }
-        self.shutdown_waiters.wait();
+        };
+        (router, shutdown)
     }
 
     pub fn send(&self, to: u64, msg: RaftMessage) {
@@ -96,8 +101,26 @@ struct Connection {
     rx_shutdown: Receiver<()>,
 }
 
+// tolerate maybe server not yet started
+#[derive(Debug, Default)]
+struct RetryRefused {
+    times: i32,
+}
+
+impl RetryRefused {
+    fn retry(&mut self, err: &io::Error) -> bool {
+        self.times += 1;
+        matches!(err.kind(), io::ErrorKind::ConnectionRefused) && self.times <= 10
+    }
+
+    fn reset(&mut self) {
+        self.times = 0;
+    }
+}
+
 impl Connection {
     fn do_main(self) -> io::Result<()> {
+        let mut retry_refused = RetryRefused::default();
         let mut transport = Transport::default();
         let mut socket = None;
 
@@ -123,20 +146,16 @@ impl Connection {
                 transport.write_context().buffer().put_slice(buf.as_slice());
             }
 
-            // tolerate maybe server not yet started
-            fn refused(err: &io::Error) -> bool {
-                matches!(err.kind(), io::ErrorKind::ConnectionRefused)
-            }
-
             let stream = match socket {
                 None => match TcpStream::connect(self.peer.address.clone()) {
                     Ok(stream) => {
+                        retry_refused.reset();
                         stream.set_nonblocking(true)?;
                         stream.set_nodelay(true)?;
                         socket = Some(stream);
                         socket.as_mut().unwrap()
                     }
-                    Err(ref err) if refused(err) => continue,
+                    Err(ref err) if retry_refused.retry(err) => continue,
                     Err(err) => return Err(err),
                 },
                 Some(ref mut stream) => stream,

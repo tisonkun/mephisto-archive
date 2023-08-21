@@ -12,28 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    Arc,
-};
+fn main() -> std::io::Result<()> {
+    std::env::set_var("PROTOC", protobuf_src::protoc());
 
-use polling::Poller;
-use tracing::trace;
+    let mut config = prost_build::Config::new();
+    config.bytes(["data"]);
+    config.compile_protos(&["datatree.proto"], &["proto"])?;
 
-pub struct ShutdownIO {
-    poller: Arc<Poller>,
-    shutdown: Arc<AtomicBool>,
-}
-
-impl ShutdownIO {
-    pub fn new(poller: Arc<Poller>, shutdown: Arc<AtomicBool>) -> ShutdownIO {
-        ShutdownIO { poller, shutdown }
-    }
-
-    pub fn shutdown(&self) {
-        self.shutdown.store(true, Ordering::SeqCst);
-        if let Err(err) = self.poller.notify() {
-            trace!(?err, "shutdown IO cannot notify the poller");
-        }
-    }
+    println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed=datatree.proto");
+    Ok(())
 }

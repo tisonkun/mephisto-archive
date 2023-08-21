@@ -16,6 +16,7 @@ use std::{
     io,
     mem::size_of,
     net::{TcpListener, TcpStream},
+    ops::DerefMut,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -33,6 +34,14 @@ use crate::{
     transport::{ReadContext, Transport},
     RaftMessage,
 };
+
+fn interrupted(err: &io::Error) -> bool {
+    matches!(err.kind(), io::ErrorKind::Interrupted)
+}
+
+fn would_block(err: &io::Error) -> bool {
+    matches!(err.kind(), io::ErrorKind::WouldBlock)
+}
 
 pub struct RaftService {
     this: Peer,
@@ -61,22 +70,37 @@ impl RaftService {
             "raft service is serving requests"
         );
 
-        let mut shutdown_signals = vec![];
-        let shutdown_waiters = WaitGroup::new();
-
         let listener = TcpListener::bind(self.this.address)?;
         listener.set_nonblocking(true)?;
         self.poller.add(&listener, Event::readable(1))?;
+
+        let mut guard = scopeguard::guard(
+            (vec![], WaitGroup::new()),
+            |(signals, waiters): (Vec<ShutdownIO>, WaitGroup)| {
+                for shutdown in signals {
+                    shutdown.shutdown();
+                }
+                waiters.wait();
+            },
+        );
+
+        let (shutdown_signals, shutdown_waiters) = guard.deref_mut();
 
         loop {
             let mut events = vec![];
             self.poller.wait(&mut events, None)?;
 
             if self.is_shutdown.load(Ordering::SeqCst) {
-                break;
+                return Ok(());
             }
 
-            while let Some(socket) = listener.incoming().next().transpose()? {
+            while let Some(socket) = match listener.incoming().next() {
+                None => None,
+                Some(Err(ref err)) if would_block(err) => None,
+                Some(Err(ref err)) if interrupted(err) => None,
+                Some(Err(err)) => return Err(err),
+                Some(Ok(socket)) => Some(socket),
+            } {
                 let address = socket.peer_addr()?;
                 trace!("accepted connection to {}", address);
                 let c = Connection::new(socket, self.tx_message.clone())?;
@@ -95,13 +119,6 @@ impl RaftService {
 
             self.poller.modify(&listener, Event::readable(1))?;
         }
-
-        for shutdown in shutdown_signals {
-            shutdown.shutdown()?;
-        }
-        shutdown_waiters.wait();
-
-        Ok(())
     }
 }
 

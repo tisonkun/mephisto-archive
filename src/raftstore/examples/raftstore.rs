@@ -12,16 +12,59 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::time::Duration;
-
-use crossbeam::sync::WaitGroup;
+use crossbeam::{channel::Receiver, sync::WaitGroup};
 use mephisto_raft::Peer;
-use mephisto_raftstore::node::RaftNode;
+use mephisto_raftstore::{
+    node::RaftNode,
+    proto::{
+        datatree::{CreateRequest, DataTreeRequest, GetDataRequest, RequestHeader, RequestType},
+        FatReply, FatRequest, ReqId,
+    },
+};
 use tracing::{error, error_span, info, Level};
+use tracing_subscriber::{filter::FilterFn, layer::SubscriberExt, util::SubscriberInitExt, Layer};
+
+fn make_create_req(req_id: ReqId, path: String, data: String) -> (FatRequest, Receiver<FatReply>) {
+    let (tx, rx) = crossbeam::channel::bounded(1);
+    let req = FatRequest {
+        req_id,
+        header: RequestHeader {
+            req_id: req_id.req_id,
+            req_type: RequestType::ReqCreate as i32,
+        },
+        request: DataTreeRequest::Create(CreateRequest {
+            path,
+            data: data.into(),
+        }),
+        reply: tx,
+    };
+    (req, rx)
+}
+
+fn make_get_data_req(req_id: ReqId, path: String) -> (FatRequest, Receiver<FatReply>) {
+    let (tx, rx) = crossbeam::channel::bounded(1);
+    let req = FatRequest {
+        req_id,
+        header: RequestHeader {
+            req_id: req_id.req_id,
+            req_type: RequestType::ReqGetData as i32,
+        },
+        request: DataTreeRequest::GetData(GetDataRequest { path }),
+        reply: tx,
+    };
+    (req, rx)
+}
 
 fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt()
-        .with_max_level(Level::TRACE)
+    let filter = FilterFn::new(|meta| {
+        // filter out logs of the "polling" crate
+        !meta.target().starts_with("polling")
+    })
+    .with_max_level_hint(Level::INFO);
+    let layer = tracing_subscriber::fmt::layer();
+
+    tracing_subscriber::registry()
+        .with(layer.with_filter(filter))
         .init();
 
     let peers = vec![
@@ -42,8 +85,11 @@ fn main() -> anyhow::Result<()> {
     let mut shutdown_nodes = vec![];
     let shutdown_waiters = WaitGroup::new();
 
+    let mut requesters = vec![];
+
     for peer in peers.iter() {
         let node = RaftNode::new(peer.clone(), peers.clone());
+        requesters.push(node.tx_request());
         shutdown_nodes.push(node.shutdown());
         let wg = shutdown_waiters.clone();
         let peer_id = peer.id;
@@ -56,8 +102,33 @@ fn main() -> anyhow::Result<()> {
         });
     }
 
-    for _ in 0..10 {
-        std::thread::sleep(Duration::from_secs(1));
+    let client_id = uuid::Uuid::new_v4();
+    let mut results = vec![];
+    for i in 0..10 {
+        let (req, rx) = make_create_req(
+            ReqId {
+                client_id,
+                req_id: 2 * i,
+            },
+            format!("mephisto-{}", i / 2),
+            format!("value-{}", i),
+        );
+        requesters[0].send(req).unwrap();
+        results.push(rx);
+
+        let (req, rx) = make_get_data_req(
+            ReqId {
+                client_id,
+                req_id: 2 * i + 1,
+            },
+            format!("mephisto-{}", i / 2),
+        );
+        requesters[0].send(req).unwrap();
+        results.push(rx);
+    }
+
+    for (i, result) in results.iter().enumerate() {
+        info!("rx.recv()[{i}]={:?}", result.recv());
     }
 
     for shutdown in shutdown_nodes {
