@@ -17,6 +17,10 @@ name = "mephisto-raft"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
+readme.workspace = true
+license.workspace = true
+keywords.workspace = true
+repository.workspace = true
 
 [features]
 failpoints = ["fail/failpoints"]
