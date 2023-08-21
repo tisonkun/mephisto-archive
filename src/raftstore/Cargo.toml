@@ -20,3 +20,4 @@ authors.workspace = true
 
 [dependencies]
 bytes = "1.4.0"
+polling = "2.8.0"
