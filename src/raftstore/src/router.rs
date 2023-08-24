@@ -62,22 +62,14 @@ impl RaftRouter {
             let (tx_message, rx_message) = crossbeam::channel::unbounded();
             let (tx_shutdown, rx_shutdown) = crossbeam::channel::bounded(1);
             peers.insert(peer.id, tx_message);
+            shutdown_signals.push(tx_shutdown);
+
             let c = Connection {
                 peer,
                 rx_message,
                 rx_shutdown,
             };
-            let wg = shutdown_waiters.clone();
-            std::thread::spawn(move || {
-                error_span!("router", this = this.id, peer = peer_id).in_scope(|| {
-                    match c.do_main() {
-                        Ok(()) => info!("router closed"),
-                        Err(err) => error!(?err, "router failed"),
-                    }
-                });
-                drop(wg);
-            });
-            shutdown_signals.push(tx_shutdown);
+            c.do_main(this.id, peer_id, shutdown_waiters.clone());
         }
 
         let router = RaftRouter { this, peers };
@@ -119,7 +111,17 @@ impl RetryRefused {
 }
 
 impl Connection {
-    fn do_main(self) -> io::Result<()> {
+    fn do_main(self, this: u64, peer: u64, wg: WaitGroup) {
+        std::thread::spawn(move || {
+            error_span!("router", this, peer).in_scope(|| match self.internal_do_main() {
+                Ok(()) => info!("router closed"),
+                Err(err) => error!(?err, "router failed"),
+            });
+            drop(wg);
+        });
+    }
+
+    fn internal_do_main(self) -> io::Result<()> {
         let mut retry_refused = RetryRefused::default();
         let mut transport = Transport::default();
         let mut socket = None;

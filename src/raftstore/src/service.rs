@@ -64,7 +64,17 @@ impl RaftService {
         })
     }
 
-    pub fn do_main(self) -> io::Result<()> {
+    pub fn do_main(self, id: u64, wg: WaitGroup) {
+        std::thread::spawn(move || {
+            error_span!("service", id).in_scope(|| match self.internal_do_main() {
+                Ok(()) => info!("raft service closed"),
+                Err(err) => error!(?err, "raft service failed"),
+            });
+            drop(wg);
+        });
+    }
+
+    fn internal_do_main(self) -> io::Result<()> {
         info!(
             address = self.this.address,
             "raft service is serving requests"
@@ -104,17 +114,8 @@ impl RaftService {
                 let address = socket.peer_addr()?;
                 trace!("accepted connection to {}", address);
                 let c = Connection::new(socket, self.tx_message.clone())?;
-                let wg = shutdown_waiters.clone();
                 shutdown_signals.push(c.shutdown());
-                std::thread::spawn(move || {
-                    error_span!("srvconn", id = self.this.id, ?address).in_scope(|| {
-                        match c.do_main() {
-                            Ok(()) => info!("srvconn closed"),
-                            Err(err) => error!(?err, "srvconn failed"),
-                        }
-                    });
-                    drop(wg);
-                });
+                c.do_main(self.this.id, format!("{address}"), shutdown_waiters.clone());
             }
 
             self.poller.modify(&listener, Event::readable(1))?;
@@ -145,7 +146,17 @@ impl Connection {
         ShutdownIO::new(self.poller.clone(), self.is_shutdown.clone())
     }
 
-    fn do_main(mut self) -> io::Result<()> {
+    fn do_main(self, id: u64, address: String, wg: WaitGroup) {
+        std::thread::spawn(move || {
+            error_span!("srvconn", id, address).in_scope(|| match self.internal_do_main() {
+                Ok(()) => info!("srvconn closed"),
+                Err(err) => error!(?err, "srvconn failed"),
+            });
+            drop(wg);
+        });
+    }
+
+    fn internal_do_main(mut self) -> io::Result<()> {
         self.socket.set_nodelay(true)?;
         self.socket.set_nonblocking(true)?;
         self.poller.add(&self.socket, Event::readable(1))?;

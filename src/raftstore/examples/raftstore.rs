@@ -21,7 +21,7 @@ use mephisto_raftstore::{
         FatReply, FatRequest, ReqId,
     },
 };
-use tracing::{error, error_span, info, Level};
+use tracing::{info, Level};
 use tracing_subscriber::{filter::FilterFn, layer::SubscriberExt, util::SubscriberInitExt, Layer};
 
 fn make_create_req(req_id: ReqId, path: String, data: String) -> (FatRequest, Receiver<FatReply>) {
@@ -93,13 +93,7 @@ fn main() -> anyhow::Result<()> {
         shutdown_nodes.push(node.shutdown());
         let wg = shutdown_waiters.clone();
         let peer_id = peer.id;
-        std::thread::spawn(move || {
-            error_span!("node", id = peer_id).in_scope(|| match node.do_main() {
-                Ok(()) => info!("node shutdown"),
-                Err(err) => error!(?err, "node crashed"),
-            });
-            drop(wg);
-        });
+        node.do_main(peer_id, wg);
     }
 
     let client_id = uuid::Uuid::new_v4();

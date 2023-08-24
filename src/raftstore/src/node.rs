@@ -138,18 +138,21 @@ impl RaftNode {
         }
     }
 
-    pub fn do_main(mut self) -> anyhow::Result<()> {
-        let service = RaftService::new(self.this.clone(), self.tx_message.clone())?;
-        let shutdown_service = service.shutdown();
-        let shutdown_waiters = WaitGroup::new();
-        let wg = shutdown_waiters.clone();
+    pub fn do_main(self, id: u64, wg: WaitGroup) {
         std::thread::spawn(move || {
-            error_span!("service", id = self.this.id).in_scope(|| match service.do_main() {
-                Ok(()) => info!("raft service closed"),
-                Err(err) => error!(?err, "raft service failed"),
+            error_span!("node", id).in_scope(|| match self.internal_do_main() {
+                Ok(()) => info!("node shutdown"),
+                Err(err) => error!(?err, "node crashed"),
             });
             drop(wg);
         });
+    }
+
+    pub fn internal_do_main(mut self) -> anyhow::Result<()> {
+        let service = RaftService::new(self.this.clone(), self.tx_message.clone())?;
+        let shutdown_service = service.shutdown();
+        let shutdown_waiters = WaitGroup::new();
+        service.do_main(self.this.id, shutdown_waiters.clone());
 
         let (router, shutdown_router) = RaftRouter::new(self.this.clone(), self.peers.clone());
         let _guard = scopeguard::guard((), move |_| {
