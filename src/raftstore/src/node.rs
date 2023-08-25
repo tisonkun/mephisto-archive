@@ -236,6 +236,14 @@ impl RaftNode {
             }
         }
 
+        for reads in self.pending_reads.values_mut() {
+            for read in reads.reads.iter_mut() {
+                if read.read_index == u64::MAX {
+                    self.node.read_index(read.request.req_id.serialize());
+                }
+            }
+        }
+
         for msg in self.rx_message.try_iter() {
             self.node.step(msg)?;
         }
@@ -326,23 +334,30 @@ impl RaftNode {
 
     // process pending reads if applied_index >= read_index
     fn process_pending_reads(&mut self, req_id: Option<ReqId>) {
-        fn process_pending_reads_one(
-            reads: &mut PendingReads,
-            applied_index: u64,
-            datatree: &DataTree,
-        ) {
+        let reads = match req_id {
+            None => self.pending_reads.values_mut().collect(),
+            Some(ReqId { client_id, .. }) => {
+                if let Some(reads) = self.pending_reads.get_mut(&client_id) {
+                    vec![reads]
+                } else {
+                    vec![]
+                }
+            }
+        };
+
+        for reads in reads {
             let seen_write_seq = reads.seen_write_seq;
-            let seen_apply_index = applied_index;
+            let seen_apply_index = self.state.applied_index;
             while let Some(read) = reads.reads.front() {
                 if read.wait_write_seq <= seen_write_seq && read.read_index <= seen_apply_index {
                     let read = reads.reads.pop_front().unwrap();
                     match read.request.request {
                         DataTreeRequest::GetData(request) => {
-                            let reply = datatree.get_data(request);
+                            let reply = self.datatree.get_data(request);
                             let reply = FatReply {
                                 header: ReplyHeader {
                                     req_id: read.request.req_id.seq_id,
-                                    txn_id: applied_index,
+                                    txn_id: self.state.applied_index,
                                     err: 0,
                                 },
                                 reply,
@@ -353,19 +368,6 @@ impl RaftNode {
                     }
                 } else {
                     break;
-                }
-            }
-        }
-
-        match req_id {
-            None => {
-                for reads in self.pending_reads.values_mut() {
-                    process_pending_reads_one(reads, self.state.applied_index, &self.datatree);
-                }
-            }
-            Some(ReqId { client_id, .. }) => {
-                if let Some(reads) = self.pending_reads.get_mut(&client_id) {
-                    process_pending_reads_one(reads, self.state.applied_index, &self.datatree);
                 }
             }
         }

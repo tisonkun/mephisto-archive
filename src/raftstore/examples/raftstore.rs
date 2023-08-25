@@ -96,33 +96,34 @@ fn main() -> anyhow::Result<()> {
         node.do_main(peer_id, wg);
     }
 
-    let client_id = uuid::Uuid::new_v4();
+    let client_ids = [
+        uuid::Uuid::new_v4(),
+        uuid::Uuid::new_v4(),
+        uuid::Uuid::new_v4(),
+    ];
     let mut results = vec![];
-    let mut seq_id = 0;
-    for i in 0..10 {
+    let mut seq_id = 1;
+    for i in 0..20 {
         let (req, rx) = make_create_req(
-            ReqId { client_id, seq_id },
+            ReqId {
+                client_id: client_ids[i % 3],
+                seq_id,
+            },
             format!("mephisto-{}", i / 2),
             format!("value-{}", i),
         );
-        requesters[0].send(req).unwrap();
+        requesters[i % 3].send(req).unwrap();
         results.push(rx);
         seq_id += 1;
 
-        if i % 2 == 0 {
-            let (req, rx) = make_create_req(
-                ReqId { client_id, seq_id },
-                format!("mephisto-{}", i / 2),
-                format!("value-{}", i + 1002),
-            );
-            requesters[0].send(req).unwrap();
-            results.push(rx);
-            seq_id += 1;
-        }
-
-        let (req, rx) =
-            make_get_data_req(ReqId { client_id, seq_id }, format!("mephisto-{}", i / 2));
-        requesters[0].send(req).unwrap();
+        let (req, rx) = make_get_data_req(
+            ReqId {
+                client_id: client_ids[i % 3],
+                seq_id,
+            },
+            format!("mephisto-{}", i / 2),
+        );
+        requesters[i % 3].send(req).unwrap();
         results.push(rx);
         seq_id += 1;
     }
