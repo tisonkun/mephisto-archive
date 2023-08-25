@@ -29,7 +29,7 @@ fn make_create_req(req_id: ReqId, path: String, data: String) -> (FatRequest, Re
     let req = FatRequest {
         req_id,
         header: RequestHeader {
-            req_id: req_id.req_id,
+            req_id: req_id.seq_id,
             req_type: RequestType::ReqCreate as i32,
         },
         request: DataTreeRequest::Create(CreateRequest {
@@ -46,7 +46,7 @@ fn make_get_data_req(req_id: ReqId, path: String) -> (FatRequest, Receiver<FatRe
     let req = FatRequest {
         req_id,
         header: RequestHeader {
-            req_id: req_id.req_id,
+            req_id: req_id.seq_id,
             req_type: RequestType::ReqGetData as i32,
         },
         request: DataTreeRequest::GetData(GetDataRequest { path }),
@@ -98,27 +98,33 @@ fn main() -> anyhow::Result<()> {
 
     let client_id = uuid::Uuid::new_v4();
     let mut results = vec![];
+    let mut seq_id = 0;
     for i in 0..10 {
         let (req, rx) = make_create_req(
-            ReqId {
-                client_id,
-                req_id: 2 * i,
-            },
+            ReqId { client_id, seq_id },
             format!("mephisto-{}", i / 2),
             format!("value-{}", i),
         );
         requesters[0].send(req).unwrap();
         results.push(rx);
+        seq_id += 1;
 
-        let (req, rx) = make_get_data_req(
-            ReqId {
-                client_id,
-                req_id: 2 * i + 1,
-            },
-            format!("mephisto-{}", i / 2),
-        );
+        if i % 2 == 0 {
+            let (req, rx) = make_create_req(
+                ReqId { client_id, seq_id },
+                format!("mephisto-{}", i / 2),
+                format!("value-{}", i + 1002),
+            );
+            requesters[0].send(req).unwrap();
+            results.push(rx);
+            seq_id += 1;
+        }
+
+        let (req, rx) =
+            make_get_data_req(ReqId { client_id, seq_id }, format!("mephisto-{}", i / 2));
         requesters[0].send(req).unwrap();
         results.push(rx);
+        seq_id += 1;
     }
 
     for (i, result) in results.iter().enumerate() {

@@ -31,7 +31,7 @@ impl DataTree {
         DataTreeReply::Create(CreateReply { path: req.path })
     }
 
-    pub fn get_data(&mut self, req: GetDataRequest) -> DataTreeReply {
+    pub fn get_data(&self, req: GetDataRequest) -> DataTreeReply {
         let data = self
             .nodes
             .get(req.path.as_str())

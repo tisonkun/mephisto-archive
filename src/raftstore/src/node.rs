@@ -13,7 +13,6 @@
 // limitations under the License.
 
 use std::{
-    assert_matches::debug_assert_matches,
     collections::{BTreeMap, VecDeque},
     time::{Duration, Instant},
 };
@@ -62,6 +61,20 @@ impl ShutdownNode {
     }
 }
 
+#[derive(Debug, Default)]
+struct PendingReads {
+    head_write_seq: u64,
+    seen_write_seq: u64,
+    reads: VecDeque<PendingRead>,
+}
+
+#[derive(Debug)]
+struct PendingRead {
+    read_index: u64,
+    wait_write_seq: u64,
+    request: FatRequest,
+}
+
 pub struct RaftNode {
     this: Peer,
     peers: Vec<Peer>,
@@ -73,7 +86,7 @@ pub struct RaftNode {
 
     sending_requests: VecDeque<FatRequest>,
     pending_requests: BTreeMap<ReqId, FatRequest>,
-    pending_reads: BTreeMap<u64 /* read_index */, Vec<FatRequest>>,
+    pending_reads: BTreeMap<uuid::Uuid /* client_id */, PendingReads>,
 
     tx_shutdown: Sender<()>,
     rx_shutdown: Receiver<()>,
@@ -200,11 +213,24 @@ impl RaftNode {
                         let mut data = request.header.encode_length_delimited_to_vec();
                         data.append(&mut req.encode_length_delimited_to_vec());
                         self.node.propose(request.req_id.serialize(), data)?;
+                        let entry = self
+                            .pending_reads
+                            .entry(request.req_id.client_id)
+                            .or_default();
+                        entry.head_write_seq = request.req_id.seq_id;
                         self.pending_requests.insert(request.req_id, request);
                     }
                     DataTreeRequest::GetData(_) => {
                         self.node.read_index(request.req_id.serialize());
-                        self.pending_requests.insert(request.req_id, request);
+                        let entry = self
+                            .pending_reads
+                            .entry(request.req_id.client_id)
+                            .or_default();
+                        entry.reads.push_back(PendingRead {
+                            read_index: u64::MAX,
+                            wait_write_seq: entry.head_write_seq,
+                            request,
+                        });
                     }
                 }
             }
@@ -252,21 +278,23 @@ impl RaftNode {
 
         for read_state in ready.take_read_states() {
             let req_id = ReqId::deserialize(read_state.request_ctx.as_slice());
-            if let Some(req) = self.pending_requests.remove(&req_id) {
-                debug_assert_matches!(req.header.req_type(), RequestType::ReqGetData);
-                let entry = self.pending_reads.entry(read_state.index).or_default();
-                entry.push(req);
+            if let Some(req) = self.pending_reads.get_mut(&req_id.client_id) {
+                for read in req.reads.iter_mut() {
+                    let ReqId { seq_id, client_id } = read.request.req_id;
+                    debug_assert_eq!(req_id.client_id, client_id);
+                    if seq_id > req_id.seq_id {
+                        break;
+                    }
+                    read.read_index = read.read_index.min(read_state.index);
+                }
             }
         }
-        self.process_pending_reads();
+
+        self.process_pending_reads(None);
 
         for entry in ready.take_committed_entries() {
-            let applied_index = self.state.applied_index.max(entry.index);
-            if self.process_committed_entry(entry)? {
-                continue;
-            }
-            self.state.applied_index = applied_index;
-            self.process_pending_reads();
+            self.process_committed_entry(entry)?;
+            self.process_pending_reads(None);
         }
 
         self.node.advance(ready);
@@ -297,43 +325,60 @@ impl RaftNode {
     }
 
     // process pending reads if applied_index >= read_index
-    fn process_pending_reads(&mut self) {
-        loop {
-            let read = match self.pending_reads.first_entry() {
-                None => break,
-                Some(read) => read,
-            };
-
-            if *read.key() > self.state.applied_index {
-                break;
-            }
-
-            for req in read.remove() {
-                match req.request {
-                    DataTreeRequest::GetData(request) => {
-                        let reply = self.datatree.get_data(request);
-                        let reply = FatReply {
-                            header: ReplyHeader {
-                                req_id: req.req_id.req_id,
-                                txn_id: self.state.applied_index,
-                                err: 0,
-                            },
-                            reply,
-                        };
-                        req.reply.send(reply).unwrap();
+    fn process_pending_reads(&mut self, req_id: Option<ReqId>) {
+        fn process_pending_reads_one(
+            reads: &mut PendingReads,
+            applied_index: u64,
+            datatree: &DataTree,
+        ) {
+            let seen_write_seq = reads.seen_write_seq;
+            let seen_apply_index = applied_index;
+            while let Some(read) = reads.reads.front() {
+                if read.wait_write_seq <= seen_write_seq && read.read_index <= seen_apply_index {
+                    let read = reads.reads.pop_front().unwrap();
+                    match read.request.request {
+                        DataTreeRequest::GetData(request) => {
+                            let reply = datatree.get_data(request);
+                            let reply = FatReply {
+                                header: ReplyHeader {
+                                    req_id: read.request.req_id.seq_id,
+                                    txn_id: applied_index,
+                                    err: 0,
+                                },
+                                reply,
+                            };
+                            read.request.reply.send(reply).unwrap();
+                        }
+                        r => unreachable!("illegal request {:?}", r),
                     }
-                    r => unreachable!("illegal request {:?}", r),
+                } else {
+                    break;
+                }
+            }
+        }
+
+        match req_id {
+            None => {
+                for reads in self.pending_reads.values_mut() {
+                    process_pending_reads_one(reads, self.state.applied_index, &self.datatree);
+                }
+            }
+            Some(ReqId { client_id, .. }) => {
+                if let Some(reads) = self.pending_reads.get_mut(&client_id) {
+                    process_pending_reads_one(reads, self.state.applied_index, &self.datatree);
                 }
             }
         }
     }
 
-    fn process_committed_entry(&mut self, entry: Entry) -> anyhow::Result<bool> {
+    fn process_committed_entry(&mut self, entry: Entry) -> anyhow::Result<()> {
+        let applied_index = self.state.applied_index.max(entry.index);
         match entry.entry_type() {
             EntryType::EntryNormal => {
                 if entry.data.is_empty() {
                     // empty entry indicate a becoming leader event
-                    return Ok(true);
+                    self.state.applied_index = applied_index;
+                    return Ok(());
                 }
 
                 let req_id = ReqId::deserialize(entry.context.as_slice());
@@ -352,11 +397,22 @@ impl RaftNode {
                 match request {
                     DataTreeRequest::Create(request) => {
                         let reply = self.datatree.create(request);
+                        if let Some(reads) = self.pending_reads.get_mut(&req_id.client_id) {
+                            for read in reads.reads.iter_mut() {
+                                if read.wait_write_seq < req_id.seq_id {
+                                    // seen latter write, must flush
+                                    read.read_index = 0;
+                                } else {
+                                    break;
+                                }
+                            }
+                            self.process_pending_reads(Some(req_id));
+                        }
                         if let Some(sending_reply) = self.pending_requests.remove(&req_id) {
                             let reply = FatReply {
                                 header: ReplyHeader {
-                                    req_id: req_id.req_id,
-                                    txn_id: self.state.applied_index,
+                                    req_id: req_id.seq_id,
+                                    txn_id: applied_index,
                                     err: 0,
                                 },
                                 reply,
@@ -366,10 +422,15 @@ impl RaftNode {
                     }
                     _ => unreachable!("illegal request type {:?}", hdr.req_type()),
                 }
+
+                if let Some(reads) = self.pending_reads.get_mut(&req_id.client_id) {
+                    reads.seen_write_seq = req_id.seq_id;
+                }
             }
             EntryType::EntryConfChange => unimplemented!("EntryConfChange"),
         }
 
-        Ok(false)
+        self.state.applied_index = applied_index;
+        Ok(())
     }
 }

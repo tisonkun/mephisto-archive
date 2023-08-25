@@ -39,7 +39,7 @@ pub mod datatree {
 #[derive(Debug, Copy, Clone, Hash, Ord, PartialOrd, Eq, PartialEq)]
 pub struct ReqId {
     pub client_id: uuid::Uuid,
-    pub req_id: u64,
+    pub seq_id: u64,
 }
 
 impl ReqId {
@@ -48,7 +48,7 @@ impl ReqId {
         let (msb, lsb) = self.client_id.as_u64_pair();
         data.put_u64(msb);
         data.put_u64(lsb);
-        data.put_u64(self.req_id);
+        data.put_u64(self.seq_id);
         data.to_vec()
     }
 
@@ -56,8 +56,8 @@ impl ReqId {
         let msb = data.get_u64();
         let lsb = data.get_u64();
         let client_id = uuid::Uuid::from_u64_pair(msb, lsb);
-        let req_id = data.get_u64();
-        ReqId { client_id, req_id }
+        let seq_id = data.get_u64();
+        ReqId { client_id, seq_id }
     }
 }
 
