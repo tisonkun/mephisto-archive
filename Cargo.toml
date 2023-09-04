@@ -14,8 +14,7 @@
 
 [workspace]
 members = [
-    'src/raft',
-    'src/raftstore',
+    'src/mephisto',
 ]
 
 resolver = "2"
@@ -27,4 +26,4 @@ authors = ["tison <wander4096@gmail.com>"]
 readme = "README.md"
 license = "Apache-2.0"
 repository = "https://github.com/tisonkun/mephisto/"
-keywords = ["distributed-systems", "raft"]
+keywords = ["distributed-systems", "paxos"]

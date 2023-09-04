@@ -57,15 +57,6 @@ jobs:
       - name: Run benches
         run: cargo bench --workspace -- --test
 
-  failpoints:
-    name: Failpoints tests
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      - uses: Swatinem/rust-cache@v2
-      - name: Run failpoints tests
-        run: cargo test --workspace --features failpoints --test raft_tests -- --nocapture
-
   required:
     name: Required
     runs-on: ubuntu-latest
@@ -80,7 +71,6 @@ jobs:
           if [[ ! ( \
                  "${{ needs.check.result }}" == "success" \
               && "${{ needs.test.result }}" == "success" \
-              && "${{ needs.failpoints.result }}" == "success" \
               ) ]]; then
             echo "Required jobs haven't been completed successfully."
             exit -1

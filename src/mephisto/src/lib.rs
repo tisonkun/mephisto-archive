@@ -12,10 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! This module contains various testing harness utilities for Raft.
+pub fn add(left: usize, right: usize) -> usize {
+    left + right
+}
 
-mod interface;
-mod network;
-mod util;
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-pub use self::{interface::Interface, network::Network, util::*};
+    #[test]
+    fn it_works() {
+        let result = add(2, 2);
+        assert_eq!(result, 4);
+    }
+}
