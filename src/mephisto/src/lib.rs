@@ -13,7 +13,6 @@
 // limitations under the License.
 
 use std::{
-    cmp::Ordering,
     fmt::{Debug, Display, Formatter},
     sync::Arc,
 };
@@ -45,30 +44,10 @@ impl Display for ProcessId {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Ord, PartialOrd, Eq, PartialEq)]
 pub struct BallotNumber {
     round: u64,
     leader_id: ProcessId,
-}
-
-impl PartialEq for BallotNumber {
-    fn eq(&self, other: &Self) -> bool {
-        self.round.eq(&other.round)
-    }
-}
-
-impl Eq for BallotNumber {}
-
-impl PartialOrd for BallotNumber {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for BallotNumber {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.round.cmp(&other.round)
-    }
 }
 
 impl Display for BallotNumber {
