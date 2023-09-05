@@ -110,7 +110,7 @@ impl Replica {
         for s in 1..self.slot_out {
             let exist = match self.decisions.get(&s) {
                 None => false,
-                Some(cmd) => cmd == &command,
+                Some(cmd) => command.eq(cmd),
             };
             if exist {
                 self.slot_out += 1;
