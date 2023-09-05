@@ -12,17 +12,121 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-pub fn add(left: usize, right: usize) -> usize {
-    left + right
+use std::{
+    cmp::Ordering,
+    fmt::{Debug, Display, Formatter},
+    sync::Arc,
+};
+
+pub mod acceptor;
+pub mod commander;
+pub mod env;
+pub mod leader;
+pub mod message;
+pub mod process;
+pub mod pvalue;
+pub mod replica;
+pub mod scout;
+
+pub const WINDOW: u64 = 5;
+
+#[derive(Debug, Clone, Ord, PartialOrd, Eq, PartialEq, Hash)]
+pub struct ProcessId(Arc<String>);
+
+impl ProcessId {
+    pub fn new(id: String) -> ProcessId {
+        ProcessId(Arc::new(id))
+    }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
+impl Display for ProcessId {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct BallotNumber {
+    round: u64,
+    leader_id: ProcessId,
+}
+
+impl PartialEq for BallotNumber {
+    fn eq(&self, other: &Self) -> bool {
+        self.round.eq(&other.round)
+    }
+}
+
+impl Eq for BallotNumber {}
+
+impl PartialOrd for BallotNumber {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for BallotNumber {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.round.cmp(&other.round)
+    }
+}
+
+impl Display for BallotNumber {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "BN({},{})", self.round, self.leader_id)
+    }
+}
+
+#[derive(Default, Debug, Clone)]
+pub struct Config {
+    pub replicas: Vec<ProcessId>,
+    pub acceptors: Vec<ProcessId>,
+    pub leaders: Vec<ProcessId>,
+}
+
+#[derive(Debug, Clone)]
+pub enum Command {
+    Operation(OperationCommand),
+    Config(ConfigCommand),
+}
+
+impl Command {
+    pub fn id(&self) -> u64 {
+        match self {
+            Command::Operation(cmd) => cmd.req_id,
+            Command::Config(cmd) => cmd.req_id,
+        }
+    }
+}
+
+impl PartialEq for Command {
+    fn eq(&self, other: &Self) -> bool {
+        self.id().eq(&other.id())
+    }
+}
+
+impl Eq for Command {}
+
+#[derive(Clone)]
+pub struct OperationCommand {
+    pub client: ProcessId,
+    pub req_id: u64,
+    pub op: Vec<u8>,
+}
+
+impl Debug for OperationCommand {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let mut de = f.debug_struct("OperationCommand");
+        de.field("client", &self.client);
+        de.field("req_id", &self.req_id);
+        de.field("op", &String::from_utf8_lossy(self.op.as_slice()));
+        de.finish()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ConfigCommand {
+    pub client: ProcessId,
+    pub req_id: u64,
+    pub config: Config,
 }
