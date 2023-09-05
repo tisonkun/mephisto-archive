@@ -16,6 +16,7 @@ use std::collections::{btree_map::Entry, BTreeMap};
 
 use crate::{BallotNumber, Command};
 
+/// PValue is a triple consisting of a ballot number, a slot number, a command.
 #[derive(Debug, Clone)]
 pub struct PValue {
     pub ballot_number: BallotNumber,

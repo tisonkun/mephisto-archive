@@ -29,6 +29,15 @@ use crate::{
     BallotNumber, Command, Config, ProcessId,
 };
 
+/// Leader receives requests from replicas, serializes requests and responds to replicas. Leader
+/// maintains four state variables:
+///
+/// - ballot_number: a monotonically increasing ballot number
+/// - active: a boolean flag, initially false
+/// - proposals: a map of slot numbers to proposed commands in the form of a set of (slot number,
+///   command) pairs, initially empty. At any time, there is at most one entry per slot number in
+///   the set.
+/// - config: current cluster membership to lookup replicas and acceptors.
 pub struct Leader {
     env: Arc<Mutex<Env>>,
     me: ProcessId,
@@ -85,6 +94,18 @@ impl Process for Leader {
         self.tx_inbox.clone()
     }
 
+    /// The leader starts by spawning a scout for its initial ballot number, and then enters into a
+    /// loop awaiting messages. There are three types of messages that cause transitions:
+    ///
+    /// - Propose: A replica proposes given command for given slot number.
+    /// - Adopted: Sent by a scout, this message signifies that the current ballot number has been
+    ///   adopted by a majority of acceptors. (If an adopted message arrives for an old ballot
+    ///   number, it is ignored.) The set pvalues contains all pvalues accepted by these acceptors
+    ///   prior to the adopted ballot number.
+    /// - Preempted: Sent by either a scout or a commander, it means that some acceptor has adopted
+    ///   the ballot number that is included in the message. If this ballot number is higher than
+    ///   the current ballot number of the leader, it may no longer be possible to use the current
+    ///   ballot number to choose a command.
     fn do_run(mut self) -> anyhow::Result<()> {
         info!("Leader started.");
 

@@ -44,6 +44,8 @@ impl Display for ProcessId {
     }
 }
 
+/// A ballot number is a lexicographically ordered pair of an integer and the identifier of the
+/// ballot's leader.
 #[derive(Debug, Clone, Ord, PartialOrd, Eq, PartialEq)]
 pub struct BallotNumber {
     round: u64,
@@ -56,6 +58,7 @@ impl Display for BallotNumber {
     }
 }
 
+/// A configuration consists of a list of replicas, a list of acceptors and a list of leaders.
 #[derive(Default, Debug, Clone)]
 pub struct Config {
     pub replicas: Vec<ProcessId>,
@@ -86,6 +89,8 @@ impl PartialEq for Command {
 
 impl Eq for Command {}
 
+/// A command consists of the process identifier of the client submitting the request, a
+/// client-local request identifier, and an operation (which can be anything).
 #[derive(Clone)]
 pub struct OperationCommand {
     pub client: ProcessId,
@@ -103,6 +108,9 @@ impl Debug for OperationCommand {
     }
 }
 
+/// A reconfiguration command is a command sent by a client to reconfigure the system.  A
+/// reconfiguration command consists of the process identifier of the client submitting the request,
+/// a client-local request identifier, and a configuration.
 #[derive(Debug, Clone)]
 pub struct ConfigCommand {
     pub client: ProcessId,
