@@ -12,19 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-[workspace]
-members = [
-    'src/portal',
-    'src/raft',
-]
+[package]
+name = "mephisto"
+description = "The rust language implementation of Raft services."
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+readme.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords.workspace = true
 
-resolver = "2"
-
-[workspace.package]
-version = "0.1.0"
-edition = "2021"
-authors = ["tison <wander4096@gmail.com>"]
-readme = "README.md"
-license = "Apache-2.0"
-repository = "https://github.com/tisonkun/mephisto/"
-keywords = ["distributed-systems", "raft"]
+[dependencies]
+mephisto-raft = { path = "../raft", version = "0.1.0" }
