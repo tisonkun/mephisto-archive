@@ -59,7 +59,7 @@ impl RaftState {
 }
 
 /// Records the context of the caller who calls entries() of Storage trait.
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct GetEntriesContext(pub(crate) GetEntriesFor);
 
 impl GetEntriesContext {
@@ -78,7 +78,7 @@ impl GetEntriesContext {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub(crate) enum GetEntriesFor {
     // for sending entries to followers
     SendAppend {
