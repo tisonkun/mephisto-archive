@@ -24,4 +24,4 @@ repository.workspace = true
 keywords.workspace = true
 
 [dependencies]
-mephisto-raft = { path = "../raft", version = "0.1.0" }
+mephisto-raft = { path = "../raft", version = "0.2.0" }

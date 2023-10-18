@@ -486,14 +486,14 @@ dependencies = [
 
 [[package]]
 name = "mephisto"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "mephisto-raft",
 ]
 
 [[package]]
 name = "mephisto-raft"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "bytes",
