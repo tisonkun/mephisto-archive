@@ -682,9 +682,11 @@ dependencies = [
  "futures",
  "mephisto-raft",
  "prost",
+ "rayon",
  "tokio",
  "tokio-util",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

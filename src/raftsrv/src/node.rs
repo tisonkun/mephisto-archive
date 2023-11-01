@@ -34,7 +34,6 @@ impl RaftNode {
 
         let config = {
             let mut config = Config::new(id);
-            config.pre_vote = true;
             config.priority = (1 << id) as i64;
             config.election_tick = 10;
             config.heartbeat_tick = 1;

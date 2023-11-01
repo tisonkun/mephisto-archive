@@ -3,7 +3,7 @@ use std::{
     io,
 };
 
-use crossbeam::channel::{Receiver, Sender};
+use crossbeam::channel::{Receiver, Select, Sender, TryRecvError};
 use futures::{SinkExt, StreamExt};
 use mephisto_raft::Peer;
 use prost::{
@@ -16,7 +16,7 @@ use tokio_util::{
     bytes::BytesMut,
     codec::{Decoder, Encoder, Framed},
 };
-use tracing::{error, error_span, info};
+use tracing::{error, error_span, info, Instrument};
 
 use crate::RaftMessage;
 
@@ -32,12 +32,16 @@ pub struct RaftService {
 }
 
 impl RaftService {
-    pub fn start(this: Peer, peers: Vec<Peer>) -> io::Result<RaftService> {
+    pub fn start(
+        this: Peer,
+        peers: Vec<Peer>,
+        rx_shutdown: Receiver<()>,
+    ) -> io::Result<RaftService> {
         let (tx_inbound, rx_inbound) = crossbeam::channel::unbounded();
         let (tx_outbound, rx_outbound) = crossbeam::channel::unbounded();
 
         let inbound = InboundManager::start(this.clone(), tx_inbound.clone())?;
-        let outbound = OutboundManager::start(this, peers, rx_outbound.clone())?;
+        let outbound = OutboundManager::start(this, peers, rx_outbound.clone(), rx_shutdown)?;
 
         Ok(RaftService {
             inbound,
@@ -77,23 +81,28 @@ impl InboundManager {
                 let mut socket = Framed::new(socket, RaftMessageServerCodec::new());
                 let tx_inbound = tx_inbound.clone();
                 tokio::spawn(async move {
-                    while let Some(Ok(msg)) = socket.next().await {
-                        tx_inbound
-                            .send(msg)
-                            .expect("inbound channel has been closed");
+                    loop {
+                        let msg = socket.next().await;
+                        if let Some(Ok(msg)) = msg {
+                            tx_inbound
+                                .send(msg)
+                                .expect("inbound channel has been closed");
+                        }
                     }
                 });
             }
         }
 
-        runtime.spawn(async move {
-            let span = error_span!("InboundManager", id = this.id);
-            let _guard = span.enter();
-            match accept(this, tx_inbound).await {
-                Ok(()) => info!("InboundManager shutdown normally"),
-                Err(err) => error!(?err, "InboundManager shutdown improperly"),
+        let span = error_span!("InboundManager", id = this.id);
+        runtime.spawn(
+            async move {
+                match accept(this, tx_inbound).await {
+                    Ok(()) => info!("InboundManager shutdown normally"),
+                    Err(err) => error!(?err, "InboundManager shutdown improperly"),
+                }
             }
-        });
+            .instrument(span),
+        );
 
         Ok(InboundManager { runtime })
     }
@@ -109,13 +118,18 @@ impl OutboundManager {
         this: Peer,
         peers: Vec<Peer>,
         rx_outbound: Receiver<RaftMessage>,
+        rx_shutdown: Receiver<()>,
     ) -> io::Result<OutboundManager> {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .thread_name(format!("OutboundManager-{}", this.id))
             .enable_all()
             .build()?;
 
-        async fn send(peers: Vec<Peer>, rx_outbound: Receiver<RaftMessage>) -> io::Result<()> {
+        async fn send(
+            peers: Vec<Peer>,
+            rx_outbound: Receiver<RaftMessage>,
+            rx_shutdown: Receiver<()>,
+        ) -> io::Result<()> {
             let peers = peers
                 .into_iter()
                 .map(|p| (p.id, p))
@@ -124,28 +138,40 @@ impl OutboundManager {
             let mut sockets = HashMap::new();
 
             loop {
-                let msg = rx_outbound.recv().unwrap();
-                let socket = match sockets.entry(msg.to) {
-                    Entry::Occupied(entry) => entry.into_mut(),
-                    Entry::Vacant(entry) => {
-                        let peer = peers.get(&msg.to).expect("unknown peer");
-                        let socket = TcpStream::connect(&peer.address).await?;
-                        let socket = Framed::new(socket, RaftMessageServerCodec::new());
-                        entry.insert(socket)
-                    }
-                };
-                socket.send(msg).await?;
+                let mut select = Select::new();
+                select.recv(&rx_shutdown);
+                select.recv(&rx_outbound);
+                select.ready();
+
+                if !matches!(rx_shutdown.try_recv(), Err(TryRecvError::Empty)) {
+                    return Ok(());
+                }
+
+                if let Ok(msg) = rx_outbound.try_recv() {
+                    let socket = match sockets.entry(msg.to) {
+                        Entry::Occupied(entry) => entry.into_mut(),
+                        Entry::Vacant(entry) => {
+                            let peer = peers.get(&msg.to).expect("unknown peer");
+                            let socket = TcpStream::connect(&peer.address).await?;
+                            let socket = Framed::new(socket, RaftMessageServerCodec::new());
+                            entry.insert(socket)
+                        }
+                    };
+                    socket.send(msg).await?;
+                }
             }
         }
 
-        runtime.spawn(async move {
-            let span = error_span!("OutboundManager", id = this.id);
-            let _guard = span.enter();
-            match send(peers, rx_outbound).await {
-                Ok(()) => info!("OutboundManager shutdown normally"),
-                Err(err) => error!(?err, "OutboundManager shutdown improperly"),
+        let span = error_span!("OutboundManager", id = this.id);
+        runtime.spawn(
+            async move {
+                match send(peers, rx_outbound, rx_shutdown).await {
+                    Ok(()) => info!("OutboundManager shutdown normally"),
+                    Err(err) => error!(?err, "OutboundManager shutdown improperly"),
+                }
             }
-        });
+            .instrument(span),
+        );
 
         Ok(OutboundManager { runtime })
     }
