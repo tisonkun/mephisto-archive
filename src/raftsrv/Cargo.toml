@@ -11,6 +11,7 @@ keywords.workspace = true
 [dependencies]
 mephisto-raft = { path = "../raft" }
 
+anyhow = "1.0.75"
 crossbeam = "0.8.2"
 futures = "0.3.29"
 prost = "0.12.1"

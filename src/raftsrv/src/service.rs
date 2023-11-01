@@ -5,7 +5,7 @@ use std::{
 
 use crossbeam::channel::{Receiver, Sender};
 use futures::{SinkExt, StreamExt};
-use mephisto_raft::{proto::eraftpb::Message as RaftMessage, Peer};
+use mephisto_raft::Peer;
 use prost::{
     bytes::Buf,
     encoding::{decode_varint, encode_varint},
@@ -16,8 +16,12 @@ use tokio_util::{
     bytes::BytesMut,
     codec::{Decoder, Encoder, Framed},
 };
+use tracing::{error, error_span, info};
 
-pub struct RaftCoreProtocolService {
+use crate::RaftMessage;
+
+#[allow(dead_code)] // hold the fields
+pub struct RaftService {
     inbound: InboundManager,
     outbound: OutboundManager,
 
@@ -27,15 +31,15 @@ pub struct RaftCoreProtocolService {
     rx_outbound: Receiver<RaftMessage>,
 }
 
-impl RaftCoreProtocolService {
-    pub fn start(this: Peer, peers: Vec<Peer>) -> io::Result<RaftCoreProtocolService> {
+impl RaftService {
+    pub fn start(this: Peer, peers: Vec<Peer>) -> io::Result<RaftService> {
         let (tx_inbound, rx_inbound) = crossbeam::channel::unbounded();
         let (tx_outbound, rx_outbound) = crossbeam::channel::unbounded();
 
         let inbound = InboundManager::start(this.clone(), tx_inbound.clone())?;
         let outbound = OutboundManager::start(this, peers, rx_outbound.clone())?;
 
-        Ok(RaftCoreProtocolService {
+        Ok(RaftService {
             inbound,
             outbound,
             tx_inbound,
@@ -45,16 +49,17 @@ impl RaftCoreProtocolService {
         })
     }
 
-    pub fn send(&self, msg: RaftMessage) {
-        self.tx_outbound.send(msg).unwrap();
+    pub fn tx_outbound(&self) -> Sender<RaftMessage> {
+        self.tx_outbound.clone()
     }
 
-    pub fn recv(&self) -> RaftMessage {
-        self.rx_inbound.recv().unwrap()
+    pub fn rx_inbound(&self) -> Receiver<RaftMessage> {
+        self.rx_inbound.clone()
     }
 }
 
 struct InboundManager {
+    #[allow(dead_code)] // hold the field
     runtime: tokio::runtime::Runtime,
 }
 
@@ -73,18 +78,20 @@ impl InboundManager {
                 let tx_inbound = tx_inbound.clone();
                 tokio::spawn(async move {
                     while let Some(Ok(msg)) = socket.next().await {
-                        tx_inbound.send(msg).unwrap();
+                        tx_inbound
+                            .send(msg)
+                            .expect("inbound channel has been closed");
                     }
                 });
             }
         }
 
         runtime.spawn(async move {
-            let span = tracing::error_span!("InboundManager", id = this.id);
+            let span = error_span!("InboundManager", id = this.id);
             let _guard = span.enter();
             match accept(this, tx_inbound).await {
-                Ok(()) => tracing::info!("InboundManager shutdown normally"),
-                Err(err) => tracing::error!(?err, "InboundManager shutdown improperly"),
+                Ok(()) => info!("InboundManager shutdown normally"),
+                Err(err) => error!(?err, "InboundManager shutdown improperly"),
             }
         });
 
@@ -93,6 +100,7 @@ impl InboundManager {
 }
 
 struct OutboundManager {
+    #[allow(dead_code)] // hold the field
     runtime: tokio::runtime::Runtime,
 }
 
@@ -118,7 +126,7 @@ impl OutboundManager {
             loop {
                 let msg = rx_outbound.recv().unwrap();
                 let socket = match sockets.entry(msg.to) {
-                    Entry::Occupied(mut entry) => entry.into_mut(),
+                    Entry::Occupied(entry) => entry.into_mut(),
                     Entry::Vacant(entry) => {
                         let peer = peers.get(&msg.to).expect("unknown peer");
                         let socket = TcpStream::connect(&peer.address).await?;
@@ -131,11 +139,11 @@ impl OutboundManager {
         }
 
         runtime.spawn(async move {
-            let span = tracing::error_span!("OutboundManager", id = this.id);
+            let span = error_span!("OutboundManager", id = this.id);
             let _guard = span.enter();
             match send(peers, rx_outbound).await {
-                Ok(()) => tracing::info!("OutboundManager shutdown normally"),
-                Err(err) => tracing::error!(?err, "OutboundManager shutdown improperly"),
+                Ok(()) => info!("OutboundManager shutdown normally"),
+                Err(err) => error!(?err, "OutboundManager shutdown improperly"),
             }
         });
 

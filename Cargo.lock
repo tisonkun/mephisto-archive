@@ -677,6 +677,7 @@ dependencies = [
 name = "mephisto-raftsrv"
 version = "0.2.0"
 dependencies = [
+ "anyhow",
  "crossbeam",
  "futures",
  "mephisto-raft",
