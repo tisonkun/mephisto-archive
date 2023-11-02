@@ -16,7 +16,7 @@ use tokio_util::{
     bytes::BytesMut,
     codec::{Decoder, Encoder, Framed},
 };
-use tracing::{error, error_span, info, Instrument};
+use tracing::{debug, error, error_span, info, Instrument};
 
 use crate::RaftMessage;
 
@@ -83,6 +83,7 @@ impl InboundManager {
                 tokio::spawn(async move {
                     loop {
                         let msg = socket.next().await;
+                        debug!("Received msg {msg:?}");
                         if let Some(Ok(msg)) = msg {
                             tx_inbound
                                 .send(msg)
@@ -157,6 +158,7 @@ impl OutboundManager {
                             entry.insert(socket)
                         }
                     };
+                    debug!("Sending msg {msg:?}");
                     socket.send(msg).await?;
                 }
             }
@@ -208,6 +210,7 @@ impl Decoder for RaftMessageServerCodec {
 
             if src.remaining() >= self.peek_len as usize {
                 let msg = RaftMessage::decode(src).map_err(io::Error::other)?;
+                self.peek_len = 0;
                 return Ok(Some(msg));
             }
         }
