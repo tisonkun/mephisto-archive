@@ -34,15 +34,12 @@ use tracing::{debug, error, error_span, info, Instrument};
 
 use crate::RaftMessage;
 
-#[allow(dead_code)] // hold the fields
 pub struct RaftService {
     inbound: InboundManager,
     outbound: OutboundManager,
 
-    tx_inbound: Sender<RaftMessage>,
     rx_inbound: Receiver<RaftMessage>,
     tx_outbound: Sender<RaftMessage>,
-    rx_outbound: Receiver<RaftMessage>,
     tx_shutdown: Sender<()>,
 }
 
@@ -58,10 +55,8 @@ impl RaftService {
         Ok(RaftService {
             inbound,
             outbound,
-            tx_inbound,
             rx_inbound,
             tx_outbound,
-            rx_outbound,
             tx_shutdown,
         })
     }
@@ -82,7 +77,6 @@ impl RaftService {
 }
 
 struct InboundManager {
-    #[allow(dead_code)] // hold the field
     runtime: tokio::runtime::Runtime,
 }
 
@@ -129,7 +123,6 @@ impl InboundManager {
 }
 
 struct OutboundManager {
-    #[allow(dead_code)] // hold the field
     runtime: tokio::runtime::Runtime,
 }
 

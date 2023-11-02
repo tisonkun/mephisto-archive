@@ -17,7 +17,6 @@ use mephisto_raft::Peer;
 
 use crate::{node::RaftNode, service::RaftService};
 
-#[allow(dead_code)] // hold the fields
 pub struct RaftServer {
     service: Option<RaftService>,
     shutdown_node: Sender<()>,
