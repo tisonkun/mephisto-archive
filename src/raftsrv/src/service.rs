@@ -29,16 +29,14 @@ pub struct RaftService {
     rx_inbound: Receiver<RaftMessage>,
     tx_outbound: Sender<RaftMessage>,
     rx_outbound: Receiver<RaftMessage>,
+    tx_shutdown: Sender<()>,
 }
 
 impl RaftService {
-    pub fn start(
-        this: Peer,
-        peers: Vec<Peer>,
-        rx_shutdown: Receiver<()>,
-    ) -> io::Result<RaftService> {
+    pub fn start(this: Peer, peers: Vec<Peer>) -> io::Result<RaftService> {
         let (tx_inbound, rx_inbound) = crossbeam::channel::unbounded();
         let (tx_outbound, rx_outbound) = crossbeam::channel::unbounded();
+        let (tx_shutdown, rx_shutdown) = crossbeam::channel::bounded(1);
 
         let inbound = InboundManager::start(this.clone(), tx_inbound.clone())?;
         let outbound = OutboundManager::start(this, peers, rx_outbound.clone(), rx_shutdown)?;
@@ -50,6 +48,7 @@ impl RaftService {
             rx_inbound,
             tx_outbound,
             rx_outbound,
+            tx_shutdown,
         })
     }
 
@@ -59,6 +58,12 @@ impl RaftService {
 
     pub fn rx_inbound(&self) -> Receiver<RaftMessage> {
         self.rx_inbound.clone()
+    }
+
+    pub fn shutdown(self) {
+        self.inbound.runtime.shutdown_background();
+        self.outbound.runtime.shutdown_background();
+        let _ = self.tx_shutdown.send(());
     }
 }
 
