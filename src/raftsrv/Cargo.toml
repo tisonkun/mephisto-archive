@@ -12,20 +12,28 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-[workspace]
-members = [
-    'src/portal',
-    'src/raft',
-    'src/raftsrv',
-]
+[package]
+name = "mephisto-raftsrv"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+readme.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords.workspace = true
 
-resolver = "2"
+[dependencies]
+mephisto-raft = { path = "../raft" }
 
-[workspace.package]
-version = "0.2.0"
-edition = "2021"
-authors = ["tison <wander4096@gmail.com>"]
-readme = "README.md"
-license = "Apache-2.0"
-repository = "https://github.com/tisonkun/mephisto/"
-keywords = ["distributed-systems", "raft"]
+anyhow = "1.0.75"
+crossbeam = "0.8.2"
+futures = "0.3.29"
+prost = "0.12.1"
+tokio = { version = "1.33.0", features = ["full"] }
+tokio-util = { version = "0.7.10", features = ["codec"] }
+tracing = "0.1.40"
+tracing-subscriber = "0.3.17"
+
+[dev-dependencies]
+rayon = "1.7.0"
+tracing-subscriber = "0.3.17"

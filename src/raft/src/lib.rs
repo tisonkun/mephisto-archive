@@ -514,3 +514,16 @@ pub mod prelude {
 type DefaultHashBuilder = std::hash::BuildHasherDefault<fxhash::FxHasher>;
 type HashMap<K, V> = std::collections::HashMap<K, V, DefaultHashBuilder>;
 type HashSet<K> = std::collections::HashSet<K, DefaultHashBuilder>;
+
+/// Logging the panic info before panicking.
+#[macro_export]
+macro_rules! fatal {
+    ($($arg:tt)*) => {{
+        let prev = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            tracing::error!("{info}");
+            prev(info);
+        }));
+        panic!($($arg)*);
+    }};
+}
