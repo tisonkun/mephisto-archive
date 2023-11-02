@@ -202,6 +202,7 @@ pub struct RaftMessageServerCodec {
     peek_len: u64,
 }
 
+#[allow(clippy::new_without_default)]
 impl RaftMessageServerCodec {
     pub fn new() -> RaftMessageServerCodec {
         RaftMessageServerCodec { peek_len: 0 }
@@ -234,6 +235,6 @@ impl Decoder for RaftMessageServerCodec {
             }
         }
 
-        return Ok(None);
+        Ok(None)
     }
 }
