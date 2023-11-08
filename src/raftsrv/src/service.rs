@@ -30,7 +30,7 @@ use tokio_util::{
     bytes::BytesMut,
     codec::{Decoder, Encoder, Framed},
 };
-use tracing::{debug, error, error_span, info, Instrument};
+use tracing::{error, error_span, info, trace, Instrument};
 
 use crate::RaftMessage;
 
@@ -90,17 +90,24 @@ impl InboundManager {
         async fn accept(this: Peer, tx_inbound: Sender<RaftMessage>) -> io::Result<()> {
             let listener = TcpListener::bind(&this.address).await?;
             loop {
-                let (socket, _) = listener.accept().await?;
+                let (socket, addr) = listener.accept().await?;
                 let mut socket = Framed::new(socket, RaftMessageServerCodec::new());
                 let tx_inbound = tx_inbound.clone();
                 tokio::spawn(async move {
                     loop {
                         let msg = socket.next().await;
-                        debug!("Received msg {msg:?}");
-                        if let Some(Ok(msg)) = msg {
-                            tx_inbound
-                                .send(msg)
-                                .expect("inbound channel has been closed");
+                        trace!("Received msg {msg:?}");
+                        match msg {
+                            None => continue,
+                            Some(Ok(msg)) => {
+                                tx_inbound
+                                    .send(msg)
+                                    .expect("inbound channel has been closed");
+                            }
+                            Some(Err(err)) => {
+                                error!(?err, "socket on {addr} encounters error");
+                                break;
+                            }
                         }
                     }
                 });
@@ -161,17 +168,22 @@ impl OutboundManager {
                 }
 
                 if let Ok(msg) = rx_outbound.try_recv() {
-                    let socket = match sockets.entry(msg.to) {
-                        Entry::Occupied(entry) => entry.into_mut(),
+                    let mut socket = match sockets.entry(msg.to) {
+                        Entry::Occupied(entry) => entry,
                         Entry::Vacant(entry) => {
                             let peer = peers.get(&msg.to).expect("unknown peer");
                             let socket = TcpStream::connect(&peer.address).await?;
                             let socket = Framed::new(socket, RaftMessageServerCodec::new());
-                            entry.insert(socket)
+                            entry.insert_entry(socket)
                         }
                     };
-                    debug!("Sending msg {msg:?}");
-                    socket.send(msg).await?;
+                    trace!("Sending msg {msg:?}");
+                    if let Err(err) = socket.get_mut().send(msg).await {
+                        let to = socket.key();
+                        error!(?err, "socket to {to} encounters error");
+                        socket.remove();
+                    }
+                    // socket.mut.send(msg).await?;
                 }
             }
         }

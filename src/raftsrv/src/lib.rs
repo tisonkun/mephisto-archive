@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #![feature(io_error_other)]
+#![feature(entry_insert)]
 
 pub mod node;
 pub mod server;
