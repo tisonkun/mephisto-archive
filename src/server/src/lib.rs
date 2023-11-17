@@ -15,9 +15,5 @@
 #![feature(io_error_other)]
 #![feature(entry_insert)]
 
-pub mod node;
-pub mod proto;
-pub mod server;
-pub mod service;
-
-pub type RaftMessage = mephisto_raft::proto::eraftpb::Message;
+pub mod etcdserver;
+pub mod raftserver;

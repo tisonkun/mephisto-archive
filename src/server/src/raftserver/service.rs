@@ -32,7 +32,7 @@ use tokio_util::{
 };
 use tracing::{error, error_span, info, trace, Instrument};
 
-use crate::RaftMessage;
+use crate::raftserver::RaftMessage;
 
 pub struct RaftService {
     inbound: InboundManager,

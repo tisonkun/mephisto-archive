@@ -21,7 +21,7 @@ use crossbeam::channel::{Receiver, Select, Sender, TryRecvError};
 use mephisto_raft::{eraftpb, fatal, storage::MemStorage, Config, Peer, RawNode, StateRole};
 use tracing::{error, error_span, info};
 
-use crate::RaftMessage;
+use crate::raftserver::RaftMessage;
 
 pub struct RaftNode {
     id: u64,
