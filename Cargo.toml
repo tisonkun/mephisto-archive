@@ -16,7 +16,7 @@
 members = [
     'src/portal',
     'src/raft',
-    'src/raftsrv',
+    'src/server',
 ]
 
 resolver = "2"

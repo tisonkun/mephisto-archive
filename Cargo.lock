@@ -674,7 +674,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "mephisto-raftsrv"
+name = "mephisto-server"
 version = "0.2.0"
 dependencies = [
  "anyhow",
