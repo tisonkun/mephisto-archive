@@ -12,12 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#![feature(io_error_other)]
-#![feature(entry_insert)]
+fn main() {
+    let proto_root = "proto";
+    println!("cargo:rerun-if-changed={}", proto_root);
 
-pub mod node;
-pub mod proto;
-pub mod server;
-pub mod service;
-
-pub type RaftMessage = mephisto_raft::proto::eraftpb::Message;
+    tonic_build::configure()
+        .compile(&["proto/kv.proto", "proto/rpc.proto"], &[proto_root])
+        .expect("Failed to compile proto files");
+}
