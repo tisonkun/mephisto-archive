@@ -50,24 +50,24 @@ impl Kv for EtcdServer {
         }))
     }
 
-    async fn put(&self, request: Request<PutRequest>) -> Result<Response<PutResponse>, Status> {
+    async fn put(&self, _request: Request<PutRequest>) -> Result<Response<PutResponse>, Status> {
         unimplemented!("put")
     }
 
     async fn delete_range(
         &self,
-        request: Request<DeleteRangeRequest>,
+        _request: Request<DeleteRangeRequest>,
     ) -> Result<Response<DeleteRangeResponse>, Status> {
         unimplemented!("delete")
     }
 
-    async fn txn(&self, request: Request<TxnRequest>) -> Result<Response<TxnResponse>, Status> {
+    async fn txn(&self, _request: Request<TxnRequest>) -> Result<Response<TxnResponse>, Status> {
         unimplemented!("txn")
     }
 
     async fn compact(
         &self,
-        request: Request<CompactionRequest>,
+        _request: Request<CompactionRequest>,
     ) -> Result<Response<CompactionResponse>, Status> {
         unimplemented!("compact")
     }
