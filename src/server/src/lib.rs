@@ -17,3 +17,4 @@
 
 pub mod etcdserver;
 pub mod raftserver;
+pub mod statemachine;

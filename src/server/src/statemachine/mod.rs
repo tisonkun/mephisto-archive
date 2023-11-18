@@ -12,18 +12,27 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use mephisto_server::etcdserver::{proto::etcdserverpb::kv_server::KvServer, EtcdServer};
-use tonic::transport::Server;
+use bytes::BufMut;
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    let addr = "127.0.0.1:2379".parse()?;
-    let greeter = EtcdServer::default();
+#[derive(Default, Debug, Ord, PartialOrd, Eq, PartialEq)]
+pub struct Revision {
+    main: u64,
+    sub: u64,
+}
 
-    Server::builder()
-        .add_service(KvServer::new(greeter))
-        .serve(addr)
-        .await?;
+impl Revision {
+    pub fn new(main: u64, sub: u64) -> Revision {
+        Revision { main, sub }
+    }
 
-    Ok(())
+    pub fn to_bytes(&self, tombstone: bool) -> Vec<u8> {
+        let mut bs = vec![0; 18]; // long(8) + _(1) + long(8) + (optional) t(1)
+        bs.put_u64(self.main);
+        bs.put_u8(b'_');
+        bs.put_u64(self.sub);
+        if tombstone {
+            bs.put_u8(b't');
+        }
+        bs
+    }
 }
