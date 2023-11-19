@@ -14,6 +14,9 @@
 
 use bytes::BufMut;
 
+#[derive(Debug, Copy, Clone)]
+pub struct RevisionNotFound;
+
 #[derive(Default, Debug, Ord, PartialOrd, Eq, PartialEq, Copy, Clone)]
 pub struct Revision {
     main: u64,
@@ -37,7 +40,7 @@ impl Revision {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default, Eq, PartialEq)]
 pub struct Generation {
     version: u64,
     created: Revision,
@@ -65,11 +68,6 @@ impl Generation {
         self.revisions[self.revisions.len() - 1]
     }
 
-    pub fn add_revision(&mut self, revision: Revision) {
-        self.revisions.push(revision);
-        self.version += 1;
-    }
-
     pub fn is_empty(&self) -> bool {
         self.revisions.is_empty()
     }
@@ -86,19 +84,140 @@ impl Generation {
     }
 }
 
+pub struct KeyIndex {
+    key: Vec<u8>,
+    modified: Revision,
+    generations: Vec<Generation>,
+}
+
+impl KeyIndex {
+    pub fn new(key: Vec<u8>) -> KeyIndex {
+        KeyIndex {
+            key,
+            modified: Revision::default(),
+            generations: vec![],
+        }
+    }
+
+    pub fn put(&mut self, revision: Revision) {
+        if revision <= self.modified {
+            panic!(
+                "'put' with an unexpected smaller revision (given: {revision:?}, modified: {:?})",
+                self.modified,
+            );
+        }
+
+        if self.generations.is_empty() {
+            self.generations.push(Generation::default());
+        }
+
+        let g = {
+            let idx = self.generations.len() - 1;
+            &mut self.generations[idx]
+        };
+        if g.revisions.is_empty() {
+            g.created = revision;
+        }
+        g.revisions.push(revision);
+        g.version += 1;
+        self.modified = revision;
+    }
+
+    /// `tombstone` puts a revision, pointing to a tombstone, to the [keyIndex].
+    /// It also creates a new empty generation in the keyIndex.
+    /// It returns `Err(RevisionNotFound)` when tombstone on an empty generation.
+    pub fn tombstone(&mut self, revision: Revision) -> Result<(), RevisionNotFound> {
+        if self.is_empty() {
+            panic!(
+                "'tombstone' got an unexpected empty keyIndex (key: {})",
+                String::from_utf8_lossy(&self.key),
+            );
+        }
+
+        if self.generations[self.generations.len() - 1].is_empty() {
+            return Err(RevisionNotFound);
+        }
+
+        self.put(revision);
+        self.generations.push(Generation::default());
+        Ok(())
+    }
+
+    pub fn get(
+        &self,
+        at_rev: u64,
+    ) -> Result<
+        (
+            Revision, // modified
+            Revision, // created
+            u64,      // version
+        ),
+        RevisionNotFound,
+    > {
+        if self.is_empty() {
+            panic!(
+                "'get' got an unexpected empty keyIndex (key: {})",
+                String::from_utf8_lossy(&self.key),
+            );
+        }
+
+        let g = match self.find_generation(at_rev) {
+            None => return Err(RevisionNotFound),
+            Some(g) => g,
+        };
+
+        match g.walk(|rev| rev.main > at_rev) {
+            None => Err(RevisionNotFound),
+            Some(n) => Ok((
+                g.revisions[n],
+                g.created,
+                g.version - ((g.revisions.len() - n - 1) as u64),
+            )),
+        }
+    }
+
+    fn find_generation(&self, rev: u64) -> Option<&Generation> {
+        let lastg = (self.generations.len() - 1) as i64;
+        let mut cg = lastg;
+        while cg >= 0 {
+            if self.generations[cg as usize].revisions.is_empty() {
+                cg -= 1;
+                continue;
+            }
+            let g = &self.generations[cg as usize];
+            if cg != lastg {
+                let tomb = g.get_last_revision().main;
+                if tomb <= rev {
+                    return None;
+                }
+            }
+            if g.get_first_version().main <= rev {
+                return Some(g);
+            }
+            cg -= 1;
+        }
+        None
+    }
+
+    fn is_empty(&self) -> bool {
+        self.generations
+            .first()
+            .map(|g| g.is_empty())
+            .unwrap_or(true)
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::statemachine::{Generation, Revision};
+    use crate::statemachine::{Generation, KeyIndex, Revision};
 
     #[test]
     fn test_revisions() {
-        let revisions = vec![
-            Revision::default(),
+        let revisions = [Revision::default(),
             Revision::new(1, 0),
             Revision::new(1, 1),
             Revision::new(2, 0),
-            Revision::new(u64::MAX, u64::MAX),
-        ];
+            Revision::new(u64::MAX, u64::MAX)];
 
         for i in 0..revisions.len() - 1 {
             assert!(revisions[i] < revisions[i + 1])
@@ -149,5 +268,50 @@ mod tests {
         for case in cases {
             assert_eq!(generation.walk(case.predicate), case.result);
         }
+    }
+
+    #[test]
+    fn test_find_generation() {
+        let key_index = new_test_key_index();
+
+        let g0 = &key_index.generations[0];
+        let g1 = &key_index.generations[1];
+
+        assert_eq!(key_index.find_generation(0), None);
+        assert_eq!(key_index.find_generation(1), None);
+        assert_eq!(key_index.find_generation(2), Some(g0));
+        assert_eq!(key_index.find_generation(3), Some(g0));
+        assert_eq!(key_index.find_generation(4), Some(g0));
+        assert_eq!(key_index.find_generation(5), Some(g0));
+        assert_eq!(key_index.find_generation(6), None);
+        assert_eq!(key_index.find_generation(7), None);
+        assert_eq!(key_index.find_generation(8), Some(g1));
+        assert_eq!(key_index.find_generation(9), Some(g1));
+        assert_eq!(key_index.find_generation(10), Some(g1));
+        assert_eq!(key_index.find_generation(11), Some(g1));
+        assert_eq!(key_index.find_generation(12), None);
+        assert_eq!(key_index.find_generation(13), None);
+    }
+
+    fn new_test_key_index() -> KeyIndex {
+        // key: "foo"
+        // modified: 16
+        // generations:
+        //    {empty}
+        //    {{14, 0}[1], {14, 1}[2], {16, 0}(t)[3]}
+        //    {{8, 0}[1], {10, 0}[2], {12, 0}(t)[3]}
+        //    {{2, 0}[1], {4, 0}[2], {6, 0}(t)[3]}
+
+        let mut ki = KeyIndex::new("foo".as_bytes().to_vec());
+        ki.put(Revision::new(2, 0));
+        ki.put(Revision::new(4, 0));
+        ki.tombstone(Revision::new(6, 0)).unwrap();
+        ki.put(Revision::new(8, 0));
+        ki.put(Revision::new(10, 0));
+        ki.tombstone(Revision::new(12, 0)).unwrap();
+        ki.put(Revision::new(14, 0));
+        ki.put(Revision::new(14, 1));
+        ki.tombstone(Revision::new(16, 0)).unwrap();
+        ki
     }
 }
