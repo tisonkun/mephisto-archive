@@ -890,6 +890,7 @@ dependencies = [
  "futures",
  "mephisto-raft",
  "prost",
+ "protobuf-src",
  "rayon",
  "tokio",
  "tokio-util",
