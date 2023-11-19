@@ -26,7 +26,11 @@ pub struct Revision {
 }
 
 impl Revision {
-    pub fn new(main: u64, sub: u64) -> Revision {
+    pub fn new(main: u64) -> Revision {
+        Revision { main, sub: 0 }
+    }
+
+    pub fn sub(main: u64, sub: u64) -> Revision {
         Revision { main, sub }
     }
 
@@ -239,7 +243,17 @@ impl TreeIndex {
         self.unsafe_get(key, rev)
     }
 
-    pub fn range(&self, key: Vec<u8>, end: Option<Vec<u8>>, rev: u64, limit: usize) -> IndexRange {
+    pub fn range(&self, key: Vec<u8>, end: Option<Vec<u8>>, rev: u64) -> IndexRange {
+        self.range_limited(key, end, rev, 0)
+    }
+
+    pub fn range_limited(
+        &self,
+        key: Vec<u8>,
+        end: Option<Vec<u8>>,
+        rev: u64,
+        limit: usize,
+    ) -> IndexRange {
         let mut revisions = vec![];
         let mut keys = vec![];
         let mut total = 0;
@@ -256,7 +270,7 @@ impl TreeIndex {
             Some(end) => {
                 self.unsafe_visit(key, end, |ki| {
                     if let Ok(res) = ki.get(rev) {
-                        if limit <= 0 || revisions.len() < limit {
+                        if limit == 0 || revisions.len() < limit {
                             revisions.push(res.modified);
                             keys.push(ki.key.clone());
                         }
@@ -314,10 +328,10 @@ mod tests {
     fn test_revisions() {
         let revisions = [
             Revision::default(),
-            Revision::new(1, 0),
-            Revision::new(1, 1),
-            Revision::new(2, 0),
-            Revision::new(u64::MAX, u64::MAX),
+            Revision::new(1),
+            Revision::sub(1, 1),
+            Revision::new(2),
+            Revision::sub(u64::MAX, u64::MAX),
         ];
 
         for i in 0..revisions.len() - 1 {
@@ -327,11 +341,7 @@ mod tests {
 
     #[test]
     fn test_generation_walk() {
-        let revisions = vec![
-            Revision::new(2, 0),
-            Revision::new(4, 0),
-            Revision::new(6, 0),
-        ];
+        let revisions = vec![Revision::new(2), Revision::new(4), Revision::new(6)];
         let generation = Generation::new(3, revisions[0], revisions);
 
         struct TestCase {
@@ -404,15 +414,15 @@ mod tests {
         //    {{2, 0}[1], {4, 0}[2], {6, 0}(t)[3]}
 
         let mut ki = KeyIndex::new("foo".as_bytes().to_vec());
-        ki.put(Revision::new(2, 0));
-        ki.put(Revision::new(4, 0));
-        ki.tombstone(Revision::new(6, 0)).unwrap();
-        ki.put(Revision::new(8, 0));
-        ki.put(Revision::new(10, 0));
-        ki.tombstone(Revision::new(12, 0)).unwrap();
-        ki.put(Revision::new(14, 0));
-        ki.put(Revision::new(14, 1));
-        ki.tombstone(Revision::new(16, 0)).unwrap();
+        ki.put(Revision::new(2));
+        ki.put(Revision::new(4));
+        ki.tombstone(Revision::new(6)).unwrap();
+        ki.put(Revision::new(8));
+        ki.put(Revision::new(10));
+        ki.tombstone(Revision::new(12)).unwrap();
+        ki.put(Revision::new(14));
+        ki.put(Revision::sub(14, 1));
+        ki.tombstone(Revision::new(16)).unwrap();
         ki
     }
 
@@ -420,9 +430,9 @@ mod tests {
     fn test_tree_index_get() {
         let mut ti = TreeIndex::default();
         let key = "foo".as_bytes().to_vec();
-        let created = Revision::new(2, 0);
-        let modified = Revision::new(4, 0);
-        let deleted = Revision::new(6, 0);
+        let created = Revision::new(2);
+        let modified = Revision::new(4);
+        let deleted = Revision::new(6);
         ti.put(key.clone(), created);
         ti.put(key.clone(), modified);
         ti.tombstone(key.clone(), deleted).unwrap();
@@ -468,12 +478,96 @@ mod tests {
     fn test_tree_index_tombstone() {
         let mut ti = TreeIndex::default();
         let key = "foo".as_bytes().to_vec();
-        ti.put(key.clone(), Revision::new(1, 0));
-        ti.tombstone(key.clone(), Revision::new(2, 0)).unwrap();
+        ti.put(key.clone(), Revision::new(1));
+        ti.tombstone(key.clone(), Revision::new(2)).unwrap();
         assert_eq!(Err(RevisionNotFound), ti.get(key.clone(), 2));
         assert_eq!(
             Err(RevisionNotFound),
-            ti.tombstone(key.clone(), Revision::new(3, 0))
+            ti.tombstone(key.clone(), Revision::new(3))
         );
+    }
+
+    #[test]
+    fn test_tree_index_revisions() {
+        let mut ti = TreeIndex::default();
+        ti.put("foo".as_bytes().to_vec(), Revision::new(1));
+        ti.put("foo1".as_bytes().to_vec(), Revision::new(2));
+        ti.put("foo2".as_bytes().to_vec(), Revision::new(3));
+        ti.put("foo2".as_bytes().to_vec(), Revision::new(4));
+        ti.put("foo1".as_bytes().to_vec(), Revision::new(5));
+        ti.put("foo".as_bytes().to_vec(), Revision::new(6));
+
+        struct TestCase {
+            key: Vec<u8>,
+            end: Option<Vec<u8>>,
+            rev: u64,
+            limit: usize,
+            revisions: Vec<Revision>,
+            total: u64,
+        }
+
+        impl TestCase {
+            fn new(
+                key: &str,
+                end: Option<&str>,
+                rev: u64,
+                limit: usize,
+                total: u64,
+                revisions: Vec<u64>,
+            ) -> TestCase {
+                TestCase {
+                    key: key.as_bytes().to_vec(),
+                    end: end.map(|v| v.as_bytes().to_vec()),
+                    rev,
+                    limit,
+                    revisions: revisions.into_iter().map(Revision::new).collect(),
+                    total,
+                }
+            }
+        }
+
+        let cases = vec![
+            // single key that not found
+            TestCase::new("bar", None, 6, 0, 0, vec![]),
+            // single key that found
+            TestCase::new("foo", None, 6, 0, 1, vec![6]),
+            // various range keys, fixed atRev, unlimited
+            TestCase::new("foo", Some("foo1"), 6, 0, 1, vec![6]),
+            TestCase::new("foo", Some("foo2"), 6, 0, 2, vec![6, 5]),
+            TestCase::new("foo", Some("fop"), 6, 0, 3, vec![6, 5, 4]),
+            TestCase::new("foo1", Some("fop"), 6, 0, 2, vec![5, 4]),
+            TestCase::new("foo2", Some("fop"), 6, 0, 1, vec![4]),
+            TestCase::new("foo3", Some("fop"), 6, 0, 0, vec![]),
+            // fixed range keys, various atRev, unlimited
+            TestCase::new("foo1", Some("fop"), 1, 0, 0, vec![]),
+            TestCase::new("foo1", Some("fop"), 2, 1, 1, vec![2]),
+            TestCase::new("foo1", Some("fop"), 3, 2, 2, vec![2, 3]),
+            TestCase::new("foo1", Some("fop"), 4, 2, 2, vec![2, 4]),
+            TestCase::new("foo1", Some("fop"), 5, 2, 2, vec![5, 4]),
+            TestCase::new("foo1", Some("fop"), 6, 2, 2, vec![5, 4]),
+            // fixed range keys, fixed atRev, various limit
+            TestCase::new("foo", Some("fop"), 6, 1, 3, vec![6]),
+            TestCase::new("foo", Some("fop"), 6, 2, 3, vec![6, 5]),
+            TestCase::new("foo", Some("fop"), 6, 3, 3, vec![6, 5, 4]),
+            TestCase::new("foo", Some("fop"), 3, 1, 3, vec![1]),
+            TestCase::new("foo", Some("fop"), 3, 2, 3, vec![1, 2]),
+            TestCase::new("foo", Some("fop"), 3, 3, 3, vec![1, 2, 3]),
+        ];
+
+        for case in cases {
+            let TestCase {
+                key,
+                end,
+                rev,
+                limit,
+                revisions,
+                total,
+            } = case;
+            let res = ti.range(key.clone(), end.clone(), rev);
+            assert_eq!(total, res.total);
+            let res = ti.range_limited(key.clone(), end.clone(), rev, limit);
+            assert_eq!(total, res.total);
+            assert_eq!(revisions, res.revisions)
+        }
     }
 }
