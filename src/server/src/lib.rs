@@ -14,6 +14,7 @@
 
 #![feature(io_error_other)]
 #![feature(entry_insert)]
+#![feature(btree_cursors)]
 
 pub mod etcdserver;
 pub mod raftserver;

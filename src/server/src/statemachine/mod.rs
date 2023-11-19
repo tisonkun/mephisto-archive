@@ -12,9 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::collections::{btree_map::Entry, BTreeMap, Bound};
+
 use bytes::BufMut;
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub struct RevisionNotFound;
 
 #[derive(Default, Debug, Ord, PartialOrd, Eq, PartialEq, Copy, Clone)]
@@ -84,6 +86,21 @@ impl Generation {
     }
 }
 
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct IndexGet {
+    created: Revision,
+    modified: Revision,
+    version: u64,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct IndexRange {
+    revisions: Vec<Revision>,
+    keys: Vec<Vec<u8>>,
+    total: u64,
+}
+
+#[derive(Debug)]
 pub struct KeyIndex {
     key: Vec<u8>,
     modified: Revision,
@@ -143,17 +160,7 @@ impl KeyIndex {
         Ok(())
     }
 
-    pub fn get(
-        &self,
-        at_rev: u64,
-    ) -> Result<
-        (
-            Revision, // modified
-            Revision, // created
-            u64,      // version
-        ),
-        RevisionNotFound,
-    > {
+    pub fn get(&self, at_rev: u64) -> Result<IndexGet, RevisionNotFound> {
         if self.is_empty() {
             panic!(
                 "'get' got an unexpected empty keyIndex (key: {})",
@@ -168,11 +175,11 @@ impl KeyIndex {
 
         match g.walk(|rev| rev.main > at_rev) {
             None => Err(RevisionNotFound),
-            Some(n) => Ok((
-                g.revisions[n],
-                g.created,
-                g.version - ((g.revisions.len() - n - 1) as u64),
-            )),
+            Some(n) => Ok(IndexGet {
+                modified: g.revisions[n],
+                created: g.created,
+                version: g.version - ((g.revisions.len() - n - 1) as u64),
+            }),
         }
     }
 
@@ -207,17 +214,111 @@ impl KeyIndex {
     }
 }
 
+#[derive(Debug, Default)]
+pub struct TreeIndex {
+    tree: BTreeMap<Vec<u8>, KeyIndex>,
+}
+
+impl TreeIndex {
+    pub fn put(&mut self, key: Vec<u8>, revision: Revision) {
+        match self.tree.entry(key) {
+            Entry::Vacant(ent) => {
+                let ki = KeyIndex::new(ent.key().clone());
+                ent.insert(ki).put(revision)
+            }
+            Entry::Occupied(mut ent) => ent.get_mut().put(revision),
+        }
+    }
+
+    pub fn tombstone(&mut self, key: Vec<u8>, revision: Revision) -> Result<(), RevisionNotFound> {
+        let ki = self.tree.get_mut(&key).ok_or(RevisionNotFound)?;
+        ki.tombstone(revision)
+    }
+
+    pub fn get(&self, key: Vec<u8>, rev: u64) -> Result<IndexGet, RevisionNotFound> {
+        self.unsafe_get(key, rev)
+    }
+
+    pub fn range(&self, key: Vec<u8>, end: Option<Vec<u8>>, rev: u64, limit: usize) -> IndexRange {
+        let mut revisions = vec![];
+        let mut keys = vec![];
+        let mut total = 0;
+
+        match end {
+            None => {
+                if let Ok(res) = self.unsafe_get(key.clone(), rev) {
+                    revisions.push(res.modified);
+                    keys.push(key);
+                    total += 1;
+                }
+                // else not found - return empty result
+            }
+            Some(end) => {
+                self.unsafe_visit(key, end, |ki| {
+                    if let Ok(res) = ki.get(rev) {
+                        if limit <= 0 || revisions.len() < limit {
+                            revisions.push(res.modified);
+                            keys.push(ki.key.clone());
+                        }
+                        total += 1;
+                    }
+                    // else not found - skip
+                    true
+                });
+            }
+        }
+
+        IndexRange {
+            revisions,
+            keys,
+            total,
+        }
+    }
+
+    pub fn unsafe_get(&self, key: Vec<u8>, rev: u64) -> Result<IndexGet, RevisionNotFound> {
+        let ki = self.tree.get(&key).ok_or(RevisionNotFound)?;
+        ki.get(rev)
+    }
+
+    fn unsafe_visit(&self, key: Vec<u8>, end: Vec<u8>, mut f: impl FnMut(&KeyIndex) -> bool) {
+        let mut cursor = self.tree.lower_bound(Bound::Included(&key));
+        loop {
+            let (k, v) = match cursor.key_value() {
+                None => break,
+                Some((k, v)) => (k, v),
+            };
+
+            if !is_infinite(&end) && k >= &end {
+                break;
+            }
+
+            if !f(v) {
+                break;
+            }
+
+            cursor.move_next();
+        }
+    }
+}
+
+pub fn is_infinite(key: &Vec<u8>) -> bool {
+    // encode {0} as infinite
+    key.is_empty()
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::statemachine::{Generation, KeyIndex, Revision};
+    use super::*;
 
     #[test]
     fn test_revisions() {
-        let revisions = [Revision::default(),
+        let revisions = [
+            Revision::default(),
             Revision::new(1, 0),
             Revision::new(1, 1),
             Revision::new(2, 0),
-            Revision::new(u64::MAX, u64::MAX)];
+            Revision::new(u64::MAX, u64::MAX),
+        ];
 
         for i in 0..revisions.len() - 1 {
             assert!(revisions[i] < revisions[i + 1])
@@ -313,5 +414,66 @@ mod tests {
         ki.put(Revision::new(14, 1));
         ki.tombstone(Revision::new(16, 0)).unwrap();
         ki
+    }
+
+    #[test]
+    fn test_tree_index_get() {
+        let mut ti = TreeIndex::default();
+        let key = "foo".as_bytes().to_vec();
+        let created = Revision::new(2, 0);
+        let modified = Revision::new(4, 0);
+        let deleted = Revision::new(6, 0);
+        ti.put(key.clone(), created);
+        ti.put(key.clone(), modified);
+        ti.tombstone(key.clone(), deleted).unwrap();
+
+        assert_eq!(Err(RevisionNotFound), ti.get(key.clone(), 0));
+        assert_eq!(Err(RevisionNotFound), ti.get(key.clone(), 1));
+        assert_eq!(
+            Ok(IndexGet {
+                created,
+                modified: created,
+                version: 1,
+            }),
+            ti.get(key.clone(), 2)
+        );
+        assert_eq!(
+            Ok(IndexGet {
+                created,
+                modified: created,
+                version: 1,
+            }),
+            ti.get(key.clone(), 3)
+        );
+        assert_eq!(
+            Ok(IndexGet {
+                created,
+                modified,
+                version: 2,
+            }),
+            ti.get(key.clone(), 4)
+        );
+        assert_eq!(
+            Ok(IndexGet {
+                created,
+                modified,
+                version: 2,
+            }),
+            ti.get(key.clone(), 5)
+        );
+        assert_eq!(Err(RevisionNotFound), ti.get(key.clone(), 6));
+    }
+
+    #[test]
+    fn test_tree_index_tombstone() {
+        let mut ti = TreeIndex::default();
+        let key = "foo".as_bytes().to_vec();
+        ti.put(key.clone(), Revision::new(1, 0));
+        ti.tombstone(key.clone(), Revision::new(2, 0)).unwrap();
+        assert_eq!(Err(RevisionNotFound), ti.get(key.clone(), 2));
+        assert_eq!(
+            Err(RevisionNotFound),
+            ti.tombstone(key.clone(), Revision::new(3, 0))
+        );
     }
 }
