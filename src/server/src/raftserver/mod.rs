@@ -15,7 +15,12 @@
 use crossbeam::channel::Sender;
 use mephisto_raft::Peer;
 
-use crate::{node::RaftNode, service::RaftService};
+use crate::raftserver::{node::RaftNode, service::RaftService};
+
+pub mod node;
+pub mod service;
+
+pub type RaftMessage = mephisto_raft::proto::eraftpb::Message;
 
 pub struct RaftServer {
     service: Option<RaftService>,

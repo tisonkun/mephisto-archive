@@ -17,7 +17,7 @@ use std::{
     io,
 };
 
-use crossbeam::channel::{Receiver, Select, Sender, TryRecvError};
+use crossbeam::channel::{Receiver, Sender};
 use futures::{SinkExt, StreamExt};
 use mephisto_raft::Peer;
 use prost::{
@@ -25,43 +25,43 @@ use prost::{
     encoding::{decode_varint, encode_varint},
     Message,
 };
-use tokio::net::{TcpListener, TcpStream};
+use tokio::{
+    net::{TcpListener, TcpStream},
+    sync::mpsc::{UnboundedReceiver, UnboundedSender},
+};
 use tokio_util::{
     bytes::BytesMut,
     codec::{Decoder, Encoder, Framed},
 };
-use tracing::{debug, error, error_span, info, Instrument};
+use tracing::{error, error_span, info, trace, Instrument};
 
-use crate::RaftMessage;
+use crate::raftserver::RaftMessage;
 
 pub struct RaftService {
     inbound: InboundManager,
     outbound: OutboundManager,
 
     rx_inbound: Receiver<RaftMessage>,
-    tx_outbound: Sender<RaftMessage>,
-    tx_shutdown: Sender<()>,
+    tx_outbound: UnboundedSender<RaftMessage>,
 }
 
 impl RaftService {
     pub fn start(this: Peer, peers: Vec<Peer>) -> io::Result<RaftService> {
         let (tx_inbound, rx_inbound) = crossbeam::channel::unbounded();
-        let (tx_outbound, rx_outbound) = crossbeam::channel::unbounded();
-        let (tx_shutdown, rx_shutdown) = crossbeam::channel::bounded(1);
+        let (tx_outbound, rx_outbound) = tokio::sync::mpsc::unbounded_channel();
 
-        let inbound = InboundManager::start(this.clone(), tx_inbound.clone())?;
-        let outbound = OutboundManager::start(this, peers, rx_outbound.clone(), rx_shutdown)?;
+        let inbound = InboundManager::start(this.clone(), tx_inbound)?;
+        let outbound = OutboundManager::start(this, peers, rx_outbound)?;
 
         Ok(RaftService {
             inbound,
             outbound,
             rx_inbound,
             tx_outbound,
-            tx_shutdown,
         })
     }
 
-    pub fn tx_outbound(&self) -> Sender<RaftMessage> {
+    pub fn tx_outbound(&self) -> UnboundedSender<RaftMessage> {
         self.tx_outbound.clone()
     }
 
@@ -72,7 +72,6 @@ impl RaftService {
     pub fn shutdown(self) {
         self.inbound.runtime.shutdown_background();
         self.outbound.runtime.shutdown_background();
-        let _ = self.tx_shutdown.send(());
     }
 }
 
@@ -90,17 +89,24 @@ impl InboundManager {
         async fn accept(this: Peer, tx_inbound: Sender<RaftMessage>) -> io::Result<()> {
             let listener = TcpListener::bind(&this.address).await?;
             loop {
-                let (socket, _) = listener.accept().await?;
+                let (socket, addr) = listener.accept().await?;
                 let mut socket = Framed::new(socket, RaftMessageServerCodec::new());
                 let tx_inbound = tx_inbound.clone();
                 tokio::spawn(async move {
                     loop {
                         let msg = socket.next().await;
-                        debug!("Received msg {msg:?}");
-                        if let Some(Ok(msg)) = msg {
-                            tx_inbound
-                                .send(msg)
-                                .expect("inbound channel has been closed");
+                        trace!("Received msg {msg:?}");
+                        match msg {
+                            None => continue,
+                            Some(Ok(msg)) => {
+                                tx_inbound
+                                    .send(msg)
+                                    .expect("inbound channel has been closed");
+                            }
+                            Some(Err(err)) => {
+                                error!(?err, "socket on {addr} encounters error");
+                                break;
+                            }
                         }
                     }
                 });
@@ -130,8 +136,7 @@ impl OutboundManager {
     pub fn start(
         this: Peer,
         peers: Vec<Peer>,
-        rx_outbound: Receiver<RaftMessage>,
-        rx_shutdown: Receiver<()>,
+        rx_outbound: UnboundedReceiver<RaftMessage>,
     ) -> io::Result<OutboundManager> {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .thread_name(format!("OutboundManager-{}", this.id))
@@ -140,8 +145,7 @@ impl OutboundManager {
 
         async fn send(
             peers: Vec<Peer>,
-            rx_outbound: Receiver<RaftMessage>,
-            rx_shutdown: Receiver<()>,
+            mut rx_outbound: UnboundedReceiver<RaftMessage>,
         ) -> io::Result<()> {
             let peers = peers
                 .into_iter()
@@ -150,36 +154,31 @@ impl OutboundManager {
 
             let mut sockets = HashMap::new();
 
-            loop {
-                let mut select = Select::new();
-                select.recv(&rx_shutdown);
-                select.recv(&rx_outbound);
-                select.ready();
-
-                if !matches!(rx_shutdown.try_recv(), Err(TryRecvError::Empty)) {
-                    return Ok(());
-                }
-
-                if let Ok(msg) = rx_outbound.try_recv() {
-                    let socket = match sockets.entry(msg.to) {
-                        Entry::Occupied(entry) => entry.into_mut(),
-                        Entry::Vacant(entry) => {
-                            let peer = peers.get(&msg.to).expect("unknown peer");
-                            let socket = TcpStream::connect(&peer.address).await?;
-                            let socket = Framed::new(socket, RaftMessageServerCodec::new());
-                            entry.insert(socket)
-                        }
-                    };
-                    debug!("Sending msg {msg:?}");
-                    socket.send(msg).await?;
+            while let Some(msg) = rx_outbound.recv().await {
+                let mut socket = match sockets.entry(msg.to) {
+                    Entry::Occupied(entry) => entry,
+                    Entry::Vacant(entry) => {
+                        let peer = peers.get(&msg.to).expect("unknown peer");
+                        let socket = TcpStream::connect(&peer.address).await?;
+                        let socket = Framed::new(socket, RaftMessageServerCodec::new());
+                        entry.insert_entry(socket)
+                    }
+                };
+                trace!("Sending msg {msg:?}");
+                if let Err(err) = socket.get_mut().send(msg).await {
+                    let to = socket.key();
+                    error!(?err, "socket to {to} encounters error");
+                    socket.remove();
                 }
             }
+
+            Ok(())
         }
 
         let span = error_span!("OutboundManager", id = this.id);
         runtime.spawn(
             async move {
-                match send(peers, rx_outbound, rx_shutdown).await {
+                match send(peers, rx_outbound).await {
                     Ok(()) => info!("OutboundManager shutdown normally"),
                     Err(err) => error!(?err, "OutboundManager shutdown improperly"),
                 }

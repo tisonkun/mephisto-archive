@@ -12,10 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#![feature(io_error_other)]
+pub mod etcdserverpb {
+    tonic::include_proto!("etcdserverpb");
+}
 
-pub mod node;
-pub mod server;
-pub mod service;
-
-pub type RaftMessage = mephisto_raft::proto::eraftpb::Message;
+pub mod mvccpb {
+    tonic::include_proto!("mvccpb");
+}

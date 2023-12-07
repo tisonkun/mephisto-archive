@@ -19,9 +19,10 @@ use std::{
 
 use crossbeam::channel::{Receiver, Select, Sender, TryRecvError};
 use mephisto_raft::{eraftpb, fatal, storage::MemStorage, Config, Peer, RawNode, StateRole};
+use tokio::sync::mpsc::UnboundedSender;
 use tracing::{error, error_span, info};
 
-use crate::RaftMessage;
+use crate::raftserver::RaftMessage;
 
 pub struct RaftNode {
     id: u64,
@@ -30,7 +31,7 @@ pub struct RaftNode {
     state: StateRole,
 
     rx_inbound: Receiver<RaftMessage>,
-    tx_outbound: Sender<RaftMessage>,
+    tx_outbound: UnboundedSender<RaftMessage>,
 
     tx_shutdown: Sender<()>,
     rx_shutdown: Receiver<()>,
@@ -42,7 +43,7 @@ impl RaftNode {
         this: Peer,
         peers: Vec<Peer>,
         rx_inbound: Receiver<RaftMessage>,
-        tx_outbound: Sender<RaftMessage>,
+        tx_outbound: UnboundedSender<RaftMessage>,
     ) -> mephisto_raft::Result<RaftNode> {
         let id = this.id;
 
